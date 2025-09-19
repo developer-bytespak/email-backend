@@ -1,0 +1,218 @@
+// schema.prisma
+datasource db {
+  provider = "postgres" // You can change this to your preferred database provider.
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Client {
+  id           Int              @id @default(autoincrement())
+  name         String
+  email        String           @unique
+  phone        String
+  city         String
+  country      String
+  address      String
+  hashPassword String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @default(now()) @updatedAt
+  csvUploads   CsvUpload[]
+  contacts     Contact[]
+  emailDrafts  EmailDraft[]
+  emailLogs    EmailLog[]
+  products     ProductService[]
+  clientEmails ClientEmail[]
+  smsDrafts    SmsDraft[]
+  smsLogs      SmsLog[]
+}
+
+model CsvUpload {
+  id                Int             @id @default(autoincrement())
+  clientId          Int
+  fileName          String
+  status            CsvUploadStatus
+  totalRecords      Int
+  successfulRecords Int
+  description       String?
+  createdAt         DateTime        @default(now())
+  client            Client          @relation(fields: [clientId], references: [id])
+  contacts          Contact[]
+}
+
+enum CsvUploadStatus {
+  success
+  failure
+}
+
+model Contact {
+  id               Int           @id @default(autoincrement())
+  csvUploadId      Int
+  clientId         Int
+  businessName     String
+  email            String?
+  phone            String?
+  website          String?
+  stateProvince    String?
+  zip              String?
+  country          String?
+  status           ContactStatus @default(new)
+  valid            Boolean       @default(false)
+  validationReason String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @default(now()) @updatedAt
+  csvUpload        CsvUpload     @relation(fields: [csvUploadId], references: [id])
+  client           Client        @relation(fields: [clientId], references: [id])
+  summaries        Summary[]
+  emailDrafts      EmailDraft[]
+  smsDrafts        SmsDraft[]
+  emailLogs        EmailLog[]
+  smsLogs          SmsLog[]
+}
+
+enum ContactStatus {
+  new
+  enriched
+  scraped
+  summarized
+  emailed
+}
+
+model Summary {
+  id              Int          @id @default(autoincrement())
+  contactId       Int
+  summaryText     String
+  painPoints      String?
+  toneSuggestions String?
+  createdAt       DateTime     @default(now())
+  contact         Contact      @relation(fields: [contactId], references: [id])
+  EmailDraft      EmailDraft[]
+  SmsDraft        SmsDraft[]
+}
+
+model EmailDraft {
+  id               Int              @id @default(autoincrement())
+  clientEmailId    Int
+  contactId        Int
+  clientId         Int
+  summaryId        Int
+  subjectLine      String
+  bodyText         String
+  icebreaker       String?
+  productsRelevant String?
+  status           EmailDraftStatus @default(draft)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now()) @updatedAt
+  clientEmail      ClientEmail      @relation(fields: [clientEmailId], references: [id])
+  contact          Contact          @relation(fields: [contactId], references: [id])
+  client           Client           @relation(fields: [clientId], references: [id])
+  summary          Summary          @relation(fields: [summaryId], references: [id])
+  EmailLog         EmailLog[]
+}
+
+enum EmailDraftStatus {
+  draft
+  ready
+  sent
+}
+
+model EmailLog {
+  id               Int            @id @default(autoincrement())
+  emailDraftId     Int
+  contactId        Int
+  clientId         Int
+  status           EmailLogStatus
+  providerResponse Json?
+  sentAt           DateTime
+  emailDraft       EmailDraft     @relation(fields: [emailDraftId], references: [id])
+  contact          Contact        @relation(fields: [contactId], references: [id])
+  client           Client         @relation(fields: [clientId], references: [id])
+}
+
+enum EmailLogStatus {
+  success
+  failed
+  bounced
+}
+
+model ProductService {
+  id          Int                 @id @default(autoincrement())
+  clientId    Int
+  type        ProductServiceType?
+  name        String
+  description String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @default(now()) @updatedAt
+  client      Client              @relation(fields: [clientId], references: [id])
+}
+
+enum ProductServiceType {
+  product
+  service
+}
+
+model ClientEmail {
+  id               Int               @id @default(autoincrement())
+  clientId         Int
+  emailAddress     String
+  providerSettings String?
+  status           ClientEmailStatus @default(active)
+  mailerTestScore  Decimal?          @db.Decimal(5, 2)
+  totalCounter     Int               @default(0)
+  currentCounter   Int               @default(0)
+  timestamp        DateTime?
+  limit            Int               @default(500)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @default(now()) @updatedAt
+  client           Client            @relation(fields: [clientId], references: [id])
+  EmailDraft       EmailDraft[]
+}
+
+enum ClientEmailStatus {
+  active
+  inactive
+}
+
+model SmsDraft {
+  id               Int            @id @default(autoincrement())
+  contactId        Int
+  summaryId        Int?
+  messageText      String
+  productsRelevant String?
+  status           SmsDraftStatus @default(draft)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @default(now()) @updatedAt
+  contact          Contact        @relation(fields: [contactId], references: [id])
+  summary          Summary?       @relation(fields: [summaryId], references: [id])
+  Client           Client?        @relation(fields: [clientId], references: [id])
+  clientId         Int?
+  SmsLog           SmsLog[]
+}
+
+enum SmsDraftStatus {
+  draft
+  ready
+  sent
+}
+
+model SmsLog {
+  id               Int          @id @default(autoincrement())
+  smsDraftId       Int
+  contactId        Int
+  clientId         Int
+  status           SmsLogStatus
+  providerResponse Json?
+  sentAt           DateTime
+  smsDraft         SmsDraft     @relation(fields: [smsDraftId], references: [id])
+  contact          Contact      @relation(fields: [contactId], references: [id])
+  client           Client       @relation(fields: [clientId], references: [id])
+}
+
+enum SmsLogStatus {
+  success
+  failed
+  delivered
+  undelivered
+}
