@@ -1,8 +1,19 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../../common/services/prisma.service';
 import { UploadCsvResponseDto } from './dto/upload-csv.dto';
-import { MapColumnsResponseDto, ColumnMappingDto } from './dto/column-mapping.dto';
-import { ProcessingStatusDto, ProcessingResultDto, ProcessCsvResponseDto } from './dto/processing-result.dto';
+import {
+  MapColumnsResponseDto,
+  ColumnMappingDto,
+} from './dto/column-mapping.dto';
+import {
+  ProcessingStatusDto,
+  ProcessingResultDto,
+  ProcessCsvResponseDto,
+} from './dto/processing-result.dto';
 import { StrategyFactory } from './strategies/strategy-factory';
 import { CsvParserService } from './services/csv-parser.service';
 import { DuplicateDetectorService } from './services/duplicate-detector.service';
@@ -16,7 +27,7 @@ export class IngestionService {
     private readonly duplicateDetector: DuplicateDetectorService,
   ) {}
 
-  async uploadCsv(file: Express.Multer.File): Promise<UploadCsvResponseDto> {
+  async uploadCsv(file: Express.Multer.File, clientId: number): Promise<UploadCsvResponseDto> {
     // Validate file
     if (!file) {
       throw new BadRequestException('No file uploaded');
@@ -26,17 +37,29 @@ export class IngestionService {
       throw new BadRequestException('File must be a CSV file');
     }
 
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
+    if (file.size > 10 * 1024 * 1024) {
+      // 10MB limit
       throw new BadRequestException('File size must be less than 10MB');
     }
 
-    // TODO: Get client ID from authentication context
-    const clientId = 1; // Placeholder - should come from JWT token
+    // Convert clientId to integer and validate client exists
+    const clientIdInt = parseInt(clientId.toString(), 10);
+    if (isNaN(clientIdInt)) {
+      throw new BadRequestException('Invalid client ID');
+    }
+
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientIdInt },
+    });
+
+    if (!client) {
+      throw new BadRequestException('Client not found');
+    }
 
     // Create CSV upload record
     const csvUpload = await this.prisma.csvUpload.create({
       data: {
-        clientId,
+        clientId: clientIdInt,
         fileName: file.originalname,
         status: 'pending',
         totalRecords: 0, // Will be updated after parsing
@@ -56,7 +79,10 @@ export class IngestionService {
     };
   }
 
-  async mapColumns(uploadId: number, mapping: ColumnMappingDto): Promise<MapColumnsResponseDto> {
+  async mapColumns(
+    uploadId: number,
+    mapping: ColumnMappingDto,
+  ): Promise<MapColumnsResponseDto> {
     // Validate upload exists
     const csvUpload = await this.prisma.csvUpload.findUnique({
       where: { id: uploadId },
@@ -73,12 +99,14 @@ export class IngestionService {
     // Validate required mappings
     const requiredFields = ['businessName', 'email', 'website'];
     const mappedFields = Object.values(mapping);
-    const hasRequiredField = requiredFields.some(field => 
-      mappedFields.includes(field)
+    const hasRequiredField = requiredFields.some((field) =>
+      mappedFields.includes(field),
     );
 
     if (!hasRequiredField) {
-      throw new BadRequestException('At least one of businessName, email, or website must be mapped');
+      throw new BadRequestException(
+        'At least one of businessName, email, or website must be mapped',
+      );
     }
 
     // Update CSV upload with mapping
@@ -121,13 +149,16 @@ export class IngestionService {
       });
 
       // Get processing strategy based on client's plan
-      const strategy = this.strategyFactory.createStrategy(csvUpload.client.pricePlan.name);
+      const strategy = this.strategyFactory.createStrategy(
+        csvUpload.client.pricePlan.name,
+      );
 
       // TODO: Parse CSV file content (this would come from file storage)
       // For now, simulate processing
-      const mockCsvContent = 'businessName,email,website\nTest Company,test@example.com,https://example.com';
+      const mockCsvContent =
+        'businessName,email,website\nTest Company,test@example.com,https://example.com';
       const mapping = csvUpload.columnMapping as unknown as ColumnMappingDto;
-      
+
       // Parse CSV data
       const parsedRows = this.csvParser.parseCsvData(mockCsvContent, mapping);
 
@@ -158,7 +189,7 @@ export class IngestionService {
 
           // Validate contact using strategy
           const validationResult = await strategy.validateContact(contact);
-          
+
           if (!validationResult.isValid) {
             // Mark as invalid
             await this.prisma.contact.update({
@@ -173,8 +204,11 @@ export class IngestionService {
           }
 
           // Check for duplicates
-          const duplicateResult = await this.duplicateDetector.detectDuplicates(contact, csvUpload.clientId);
-          
+          const duplicateResult = await this.duplicateDetector.detectDuplicates(
+            contact,
+            csvUpload.clientId,
+          );
+
           if (duplicateResult.status !== 'unique') {
             // Mark as duplicate
             await this.prisma.contact.update({
@@ -206,7 +240,6 @@ export class IngestionService {
           });
 
           successfulRecords++;
-
         } catch (error) {
           console.error(`Error processing row:`, error);
           invalidRecords++;
@@ -232,7 +265,6 @@ export class IngestionService {
         message: 'CSV processing completed successfully',
         startedAt: new Date(),
       };
-
     } catch (error) {
       // Mark as failed
       await this.prisma.csvUpload.update({
@@ -256,15 +288,19 @@ export class IngestionService {
       throw new NotFoundException('CSV upload not found');
     }
 
-    const progress = csvUpload.totalRecords > 0 
-      ? (csvUpload.successfulRecords / csvUpload.totalRecords) * 100 
-      : 0;
+    const progress =
+      csvUpload.totalRecords > 0
+        ? (csvUpload.successfulRecords / csvUpload.totalRecords) * 100
+        : 0;
 
     return {
       uploadId: csvUpload.id,
       status: csvUpload.status,
       totalRecords: csvUpload.totalRecords,
-      processedRecords: csvUpload.successfulRecords + csvUpload.invalidRecords + csvUpload.duplicateRecords,
+      processedRecords:
+        csvUpload.successfulRecords +
+        csvUpload.invalidRecords +
+        csvUpload.duplicateRecords,
       successfulRecords: csvUpload.successfulRecords,
       invalidRecords: csvUpload.invalidRecords,
       duplicateRecords: csvUpload.duplicateRecords,
@@ -283,8 +319,11 @@ export class IngestionService {
       throw new NotFoundException('CSV upload not found');
     }
 
-    const processingTime = csvUpload.processedAt 
-      ? Math.round((csvUpload.processedAt.getTime() - csvUpload.createdAt.getTime()) / 1000)
+    const processingTime = csvUpload.processedAt
+      ? Math.round(
+          (csvUpload.processedAt.getTime() - csvUpload.createdAt.getTime()) /
+            1000,
+        )
       : 0;
 
     return {
@@ -299,6 +338,42 @@ export class IngestionService {
       },
       createdAt: csvUpload.createdAt,
       processedAt: csvUpload.processedAt || undefined,
+    };
+  }
+
+  async createClient(clientData: any) {
+    // Get the price plan ID based on the plan name
+    const pricePlan = await this.prisma.pricePlan.findFirst({
+      where: { name: clientData.pricePlan },
+    });
+
+    if (!pricePlan) {
+      throw new BadRequestException(`Price plan '${clientData.pricePlan}' not found`);
+    }
+
+    // Create the client
+    const client = await this.prisma.client.create({
+      data: {
+        name: clientData.name,
+        email: clientData.email,
+        phone: clientData.phone,
+        city: clientData.city,
+        country: clientData.country,
+        address: clientData.address,
+        hashPassword: 'temp_password', // TODO: Implement proper password hashing
+        pricePlanId: pricePlan.id,
+      },
+    });
+
+    return {
+      success: true,
+      data: {
+        clientId: client.id,
+        name: client.name,
+        email: client.email,
+        pricePlan: clientData.pricePlan,
+      },
+      message: 'Client created successfully',
     };
   }
 }

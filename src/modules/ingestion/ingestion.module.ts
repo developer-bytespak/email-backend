@@ -30,7 +30,7 @@ import { NotificationService } from './services/notification.service';
     BullModule.registerQueue(
       { name: 'csv-processing' },
       { name: 'email-validation' },
-      { name: 'website-resolution' }
+      { name: 'website-resolution' },
     ),
     EventEmitterModule.forRoot(),
   ],

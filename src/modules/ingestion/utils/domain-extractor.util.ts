@@ -8,11 +8,26 @@ export interface DomainExtractionResult {
 export class DomainExtractorUtil {
   private static readonly emailRegex = /^[^\s@]+@([^\s@]+)$/;
   private static readonly freeEmailDomains = [
-    'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-    'protonmail.com', 'icloud.com', 'aol.com', 'live.com',
-    'msn.com', 'zoho.com', 'mail.com', 'yandex.com',
-    'gmx.com', 'web.de', 'tutanota.com', 'fastmail.com',
-    'mail.ru', 'qq.com', '163.com', '126.com'
+    'gmail.com',
+    'yahoo.com',
+    'hotmail.com',
+    'outlook.com',
+    'protonmail.com',
+    'icloud.com',
+    'aol.com',
+    'live.com',
+    'msn.com',
+    'zoho.com',
+    'mail.com',
+    'yandex.com',
+    'gmx.com',
+    'web.de',
+    'tutanota.com',
+    'fastmail.com',
+    'mail.ru',
+    'qq.com',
+    '163.com',
+    '126.com',
   ];
 
   /**
@@ -22,7 +37,7 @@ export class DomainExtractorUtil {
     if (!email || typeof email !== 'string') {
       return {
         isValid: false,
-        error: 'Email is required'
+        error: 'Email is required',
       };
     }
 
@@ -32,7 +47,7 @@ export class DomainExtractorUtil {
     if (!match) {
       return {
         isValid: false,
-        error: 'Invalid email format'
+        error: 'Invalid email format',
       };
     }
 
@@ -42,7 +57,7 @@ export class DomainExtractorUtil {
     return {
       domain,
       isValid: true,
-      isFreeEmail
+      isFreeEmail,
     };
   }
 
@@ -58,7 +73,7 @@ export class DomainExtractorUtil {
    */
   static domainToWebsiteUrl(domain: string): string {
     const normalizedDomain = domain.toLowerCase().trim();
-    
+
     // Add protocol
     return `https://${normalizedDomain}`;
   }
@@ -67,7 +82,7 @@ export class DomainExtractorUtil {
    * Extracts multiple domains from email list
    */
   static extractDomainsFromEmails(emails: string[]): DomainExtractionResult[] {
-    return emails.map(email => this.extractDomainFromEmail(email));
+    return emails.map((email) => this.extractDomainFromEmail(email));
   }
 
   /**
@@ -75,8 +90,8 @@ export class DomainExtractorUtil {
    */
   static getUniqueDomains(emails: string[]): string[] {
     const domains = new Set<string>();
-    
-    emails.forEach(email => {
+
+    emails.forEach((email) => {
       const result = this.extractDomainFromEmail(email);
       if (result.isValid && result.domain) {
         domains.add(result.domain);
@@ -90,7 +105,7 @@ export class DomainExtractorUtil {
    * Filters out free email domains
    */
   static filterBusinessDomains(emails: string[]): string[] {
-    return emails.filter(email => {
+    return emails.filter((email) => {
       const result = this.extractDomainFromEmail(email);
       return result.isValid && result.domain && !result.isFreeEmail;
     });
@@ -104,7 +119,8 @@ export class DomainExtractorUtil {
       return false;
     }
 
-    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
+    const domainRegex =
+      /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
     return domainRegex.test(domain);
   }
 
@@ -120,7 +136,7 @@ export class DomainExtractorUtil {
    */
   static isBusinessDomain(domain: string): boolean {
     const normalized = this.normalizeDomain(domain);
-    
+
     // Skip free email domains
     if (this.isFreeEmailDomain(normalized)) {
       return false;
@@ -133,10 +149,10 @@ export class DomainExtractorUtil {
       /\.net$/i,
       /\.co\./i,
       /\.biz$/i,
-      /\.info$/i
+      /\.info$/i,
     ];
 
-    return businessPatterns.some(pattern => pattern.test(normalized));
+    return businessPatterns.some((pattern) => pattern.test(normalized));
   }
 
   /**

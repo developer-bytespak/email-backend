@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ErrorHandlingService, ProcessingError, ProcessingStatus, ErrorCategory } from './error-handling.service';
+import {
+  ErrorHandlingService,
+  ProcessingError,
+  ProcessingStatus,
+  ErrorCategory,
+} from './error-handling.service';
 
 export interface UserFeedback {
   uploadId: number;
@@ -72,7 +77,10 @@ export class UserFeedbackService {
   /**
    * Generates success feedback
    */
-  private generateSuccessFeedback(uploadId: number, status: ProcessingStatus): UserFeedback {
+  private generateSuccessFeedback(
+    uploadId: number,
+    status: ProcessingStatus,
+  ): UserFeedback {
     const successRate = (status.processedRecords / status.totalRecords) * 100;
     const errorCount = status.errors.length;
 
@@ -85,12 +93,18 @@ export class UserFeedbackService {
     } else if (successRate >= 90) {
       message = `✅ Processing completed with minor issues. ${status.processedRecords}/${status.totalRecords} records processed successfully (${successRate.toFixed(1)}% success rate).`;
       feedbackStatus = 'warning';
-      suggestions.push('Review the error details below to improve data quality for future uploads.');
+      suggestions.push(
+        'Review the error details below to improve data quality for future uploads.',
+      );
     } else {
       message = `⚠️ Processing completed with significant issues. Only ${status.processedRecords}/${status.totalRecords} records processed successfully (${successRate.toFixed(1)}% success rate).`;
       feedbackStatus = 'warning';
-      suggestions.push('Please review and fix the data issues before reprocessing.');
-      suggestions.push('Consider using the suggested fixes below to improve data quality.');
+      suggestions.push(
+        'Please review and fix the data issues before reprocessing.',
+      );
+      suggestions.push(
+        'Consider using the suggested fixes below to improve data quality.',
+      );
     }
 
     return {
@@ -98,16 +112,21 @@ export class UserFeedbackService {
       status: feedbackStatus,
       message,
       suggestions,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
   }
 
   /**
    * Generates error feedback
    */
-  private generateErrorFeedback(uploadId: number, status: ProcessingStatus): UserFeedback {
-    const criticalErrors = status.errors.filter(e => e.severity === 'CRITICAL').length;
-    const retryableErrors = status.errors.filter(e => e.retryable).length;
+  private generateErrorFeedback(
+    uploadId: number,
+    status: ProcessingStatus,
+  ): UserFeedback {
+    const criticalErrors = status.errors.filter(
+      (e) => e.severity === 'CRITICAL',
+    ).length;
+    const retryableErrors = status.errors.filter((e) => e.retryable).length;
 
     let message: string;
     const suggestions: string[] = [];
@@ -117,22 +136,32 @@ export class UserFeedbackService {
       suggestions.push('Please fix the critical errors and try again.');
     } else if (retryableErrors > 0) {
       message = `❌ Processing failed due to temporary issues. ${retryableErrors} error(s) may be retryable.`;
-      suggestions.push('Try reprocessing the file - some errors may resolve automatically.');
+      suggestions.push(
+        'Try reprocessing the file - some errors may resolve automatically.',
+      );
     } else {
       message = `❌ Processing failed. Please review the errors below and try again.`;
-      suggestions.push('Check the error details and fix the issues before reprocessing.');
+      suggestions.push(
+        'Check the error details and fix the issues before reprocessing.',
+      );
     }
 
     // Add specific suggestions based on error types
-    const errorCategories = new Set(status.errors.map(e => e.category));
+    const errorCategories = new Set(status.errors.map((e) => e.category));
     if (errorCategories.has(ErrorCategory.FILE_ERROR)) {
-      suggestions.push('Ensure your CSV file is properly formatted and under 10MB.');
+      suggestions.push(
+        'Ensure your CSV file is properly formatted and under 10MB.',
+      );
     }
     if (errorCategories.has(ErrorCategory.MAPPING_ERROR)) {
-      suggestions.push('Review your column mapping - ensure required fields are mapped correctly.');
+      suggestions.push(
+        'Review your column mapping - ensure required fields are mapped correctly.',
+      );
     }
     if (errorCategories.has(ErrorCategory.VALIDATION_ERROR)) {
-      suggestions.push('Check your data for missing or invalid values in required fields.');
+      suggestions.push(
+        'Check your data for missing or invalid values in required fields.',
+      );
     }
 
     return {
@@ -140,14 +169,17 @@ export class UserFeedbackService {
       status: 'error',
       message,
       suggestions,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
   }
 
   /**
    * Generates processing feedback
    */
-  private generateProcessingFeedback(uploadId: number, status: ProcessingStatus): UserFeedback {
+  private generateProcessingFeedback(
+    uploadId: number,
+    status: ProcessingStatus,
+  ): UserFeedback {
     const progress = status.progress;
     const processedRecords = status.processedRecords;
     const totalRecords = status.totalRecords;
@@ -166,7 +198,9 @@ export class UserFeedbackService {
     }
 
     if (status.errors.length > 0) {
-      suggestions.push(`${status.errors.length} error(s) encountered so far - processing will continue.`);
+      suggestions.push(
+        `${status.errors.length} error(s) encountered so far - processing will continue.`,
+      );
     }
 
     if (status.estimatedTimeRemaining) {
@@ -179,20 +213,25 @@ export class UserFeedbackService {
       status: 'warning',
       message,
       suggestions,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
   }
 
   /**
    * Generates pending feedback
    */
-  private generatePendingFeedback(uploadId: number, status: ProcessingStatus): UserFeedback {
+  private generatePendingFeedback(
+    uploadId: number,
+    status: ProcessingStatus,
+  ): UserFeedback {
     return {
       uploadId,
       status: 'warning',
       message: `⏳ Processing is pending. Current step: ${status.currentStep}`,
-      suggestions: ['Please wait while the system prepares your file for processing.'],
-      timestamp: new Date()
+      suggestions: [
+        'Please wait while the system prepares your file for processing.',
+      ],
+      timestamp: new Date(),
     };
   }
 
@@ -202,16 +241,23 @@ export class UserFeedbackService {
   generateProcessingReport(
     uploadId: number,
     fileName: string,
-    status: ProcessingStatus
+    status: ProcessingStatus,
   ): ProcessingReport {
     const errors = status.errors;
     const totalRecords = status.totalRecords;
     const successfulRecords = status.processedRecords - errors.length;
-    const invalidRecords = errors.filter(e => e.category === ErrorCategory.VALIDATION_ERROR).length;
-    const duplicateRecords = errors.filter(e => e.category === ErrorCategory.VALIDATION_ERROR && e.message.includes('duplicate')).length;
+    const invalidRecords = errors.filter(
+      (e) => e.category === ErrorCategory.VALIDATION_ERROR,
+    ).length;
+    const duplicateRecords = errors.filter(
+      (e) =>
+        e.category === ErrorCategory.VALIDATION_ERROR &&
+        e.message.includes('duplicate'),
+    ).length;
 
     // Calculate data quality score
-    const dataQualityScore = totalRecords > 0 ? (successfulRecords / totalRecords) : 0;
+    const dataQualityScore =
+      totalRecords > 0 ? successfulRecords / totalRecords : 0;
 
     // Determine overall status
     let reportStatus: 'completed' | 'failed' | 'partial';
@@ -232,23 +278,31 @@ export class UserFeedbackService {
       warnings.push(`${duplicateRecords} duplicate records found`);
     }
     if (dataQualityScore < 0.8) {
-      warnings.push(`Data quality score is low (${(dataQualityScore * 100).toFixed(1)}%)`);
+      warnings.push(
+        `Data quality score is low (${(dataQualityScore * 100).toFixed(1)}%)`,
+      );
     }
 
     // Generate suggestions
     const suggestions: string[] = [];
     const errorSummary = this.errorHandlingService.getErrorSummary(uploadId);
-    
+
     if (errorSummary.commonErrors.length > 0) {
-      suggestions.push(`Most common error: ${errorSummary.commonErrors[0].message} (${errorSummary.commonErrors[0].count} occurrences)`);
+      suggestions.push(
+        `Most common error: ${errorSummary.commonErrors[0].message} (${errorSummary.commonErrors[0].count} occurrences)`,
+      );
     }
 
     if (errorSummary.retryableErrors > 0) {
-      suggestions.push(`${errorSummary.retryableErrors} errors may be resolved by retrying`);
+      suggestions.push(
+        `${errorSummary.retryableErrors} errors may be resolved by retrying`,
+      );
     }
 
     if (dataQualityScore < 0.7) {
-      suggestions.push('Consider reviewing your data source for better quality');
+      suggestions.push(
+        'Consider reviewing your data source for better quality',
+      );
       suggestions.push('Ensure all required fields are properly filled');
     }
 
@@ -261,13 +315,14 @@ export class UserFeedbackService {
         successfulRecords,
         invalidRecords,
         duplicateRecords,
-        processingTime: status.lastUpdated.getTime() - status.lastUpdated.getTime(), // This would be calculated properly
-        dataQualityScore
+        processingTime:
+          status.lastUpdated.getTime() - status.lastUpdated.getTime(), // This would be calculated properly
+        dataQualityScore,
       },
       errors,
       warnings,
       suggestions,
-      generatedAt: new Date()
+      generatedAt: new Date(),
     };
 
     this.processingReports.set(uploadId, report);
@@ -282,7 +337,7 @@ export class UserFeedbackService {
     step: string,
     progress: number,
     message: string,
-    estimatedTimeRemaining?: number
+    estimatedTimeRemaining?: number,
   ): RealTimeUpdate {
     const update: RealTimeUpdate = {
       uploadId,
@@ -290,7 +345,7 @@ export class UserFeedbackService {
       progress,
       message,
       estimatedTimeRemaining,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     this.logger.debug(`Real-time update for upload ${uploadId}: ${message}`);
@@ -314,13 +369,21 @@ export class UserFeedbackService {
   /**
    * Generates suggested fixes for common issues
    */
-  generateSuggestedFixes(uploadId: number): Array<{ issue: string; fix: string; priority: 'high' | 'medium' | 'low' }> {
+  generateSuggestedFixes(uploadId: number): Array<{
+    issue: string;
+    fix: string;
+    priority: 'high' | 'medium' | 'low';
+  }> {
     const errors = this.errorHandlingService.getErrorsForUpload(uploadId);
-    const suggestions: Array<{ issue: string; fix: string; priority: 'high' | 'medium' | 'low' }> = [];
+    const suggestions: Array<{
+      issue: string;
+      fix: string;
+      priority: 'high' | 'medium' | 'low';
+    }> = [];
 
     // Group errors by type and generate suggestions
     const errorGroups = new Map<string, ProcessingError[]>();
-    errors.forEach(error => {
+    errors.forEach((error) => {
       const key = `${error.category}_${error.message}`;
       if (!errorGroups.has(key)) {
         errorGroups.set(key, []);
@@ -331,7 +394,7 @@ export class UserFeedbackService {
     errorGroups.forEach((errorList, key) => {
       const error = errorList[0];
       const count = errorList.length;
-      
+
       let priority: 'high' | 'medium' | 'low' = 'medium';
       if (error.severity === 'CRITICAL' || error.severity === 'HIGH') {
         priority = 'high';
@@ -342,7 +405,7 @@ export class UserFeedbackService {
       suggestions.push({
         issue: `${error.message} (${count} occurrence${count > 1 ? 's' : ''})`,
         fix: error.suggestedFix || this.getDefaultFix(error.category),
-        priority
+        priority,
       });
     });
 
@@ -358,7 +421,7 @@ export class UserFeedbackService {
   private getDefaultFix(category: ErrorCategory): string {
     switch (category) {
       case ErrorCategory.FILE_ERROR:
-        return 'Check file format and size, ensure it\'s a valid CSV file under 10MB';
+        return "Check file format and size, ensure it's a valid CSV file under 10MB";
       case ErrorCategory.MAPPING_ERROR:
         return 'Review column mapping and ensure required fields are mapped correctly';
       case ErrorCategory.VALIDATION_ERROR:
@@ -404,19 +467,23 @@ export class UserFeedbackService {
     averageDataQuality: number;
   } {
     const reports = Array.from(this.processingReports.values());
-    
+
     const totalUploads = reports.length;
-    const successfulUploads = reports.filter(r => r.status === 'completed').length;
-    const failedUploads = reports.filter(r => r.status === 'failed').length;
-    const averageDataQuality = reports.length > 0 
-      ? reports.reduce((sum, r) => sum + r.summary.dataQualityScore, 0) / reports.length
-      : 0;
+    const successfulUploads = reports.filter(
+      (r) => r.status === 'completed',
+    ).length;
+    const failedUploads = reports.filter((r) => r.status === 'failed').length;
+    const averageDataQuality =
+      reports.length > 0
+        ? reports.reduce((sum, r) => sum + r.summary.dataQualityScore, 0) /
+          reports.length
+        : 0;
 
     return {
       totalUploads,
       successfulUploads,
       failedUploads,
-      averageDataQuality
+      averageDataQuality,
     };
   }
 }

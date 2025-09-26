@@ -7,14 +7,14 @@ export enum ErrorCategory {
   PROCESSING_ERROR = 'PROCESSING_ERROR',
   EXTERNAL_API_ERROR = 'EXTERNAL_API_ERROR',
   DATABASE_ERROR = 'DATABASE_ERROR',
-  QUEUE_ERROR = 'QUEUE_ERROR'
+  QUEUE_ERROR = 'QUEUE_ERROR',
 }
 
 export enum ErrorSeverity {
   LOW = 'LOW',
   MEDIUM = 'MEDIUM',
   HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL'
+  CRITICAL = 'CRITICAL',
 }
 
 export interface ProcessingError {
@@ -63,12 +63,14 @@ export class ErrorHandlingService {
   /**
    * Records a processing error
    */
-  recordError(error: Omit<ProcessingError, 'id' | 'timestamp'>): ProcessingError {
+  recordError(
+    error: Omit<ProcessingError, 'id' | 'timestamp'>,
+  ): ProcessingError {
     const errorId = this.generateErrorId();
     const fullError: ProcessingError = {
       ...error,
       id: errorId,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
     this.errors.set(errorId, fullError);
@@ -89,7 +91,7 @@ export class ErrorHandlingService {
     uploadId: number,
     message: string,
     details?: any,
-    suggestedFix?: string
+    suggestedFix?: string,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.FILE_ERROR,
@@ -98,7 +100,7 @@ export class ErrorHandlingService {
       details,
       suggestedFix,
       retryable: false,
-      uploadId
+      uploadId,
     });
   }
 
@@ -110,7 +112,7 @@ export class ErrorHandlingService {
     message: string,
     field?: string,
     details?: any,
-    suggestedFix?: string
+    suggestedFix?: string,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.MAPPING_ERROR,
@@ -120,7 +122,7 @@ export class ErrorHandlingService {
       details,
       suggestedFix,
       retryable: false,
-      uploadId
+      uploadId,
     });
   }
 
@@ -133,7 +135,7 @@ export class ErrorHandlingService {
     message: string,
     field?: string,
     details?: any,
-    suggestedFix?: string
+    suggestedFix?: string,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.VALIDATION_ERROR,
@@ -144,7 +146,7 @@ export class ErrorHandlingService {
       details,
       suggestedFix,
       retryable: false,
-      uploadId
+      uploadId,
     });
   }
 
@@ -156,7 +158,7 @@ export class ErrorHandlingService {
     message: string,
     details?: any,
     retryable: boolean = true,
-    suggestedFix?: string
+    suggestedFix?: string,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.PROCESSING_ERROR,
@@ -165,7 +167,7 @@ export class ErrorHandlingService {
       details,
       suggestedFix,
       retryable,
-      uploadId
+      uploadId,
     });
   }
 
@@ -177,7 +179,7 @@ export class ErrorHandlingService {
     apiName: string,
     message: string,
     details?: any,
-    retryable: boolean = true
+    retryable: boolean = true,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.EXTERNAL_API_ERROR,
@@ -185,7 +187,7 @@ export class ErrorHandlingService {
       message: `${apiName}: ${message}`,
       details,
       retryable,
-      uploadId
+      uploadId,
     });
   }
 
@@ -196,7 +198,7 @@ export class ErrorHandlingService {
     uploadId: number,
     message: string,
     details?: any,
-    retryable: boolean = true
+    retryable: boolean = true,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.DATABASE_ERROR,
@@ -204,7 +206,7 @@ export class ErrorHandlingService {
       message,
       details,
       retryable,
-      uploadId
+      uploadId,
     });
   }
 
@@ -215,7 +217,7 @@ export class ErrorHandlingService {
     uploadId: number,
     message: string,
     details?: any,
-    retryable: boolean = true
+    retryable: boolean = true,
   ): ProcessingError {
     return this.recordError({
       category: ErrorCategory.QUEUE_ERROR,
@@ -223,7 +225,7 @@ export class ErrorHandlingService {
       message,
       details,
       retryable,
-      uploadId
+      uploadId,
     });
   }
 
@@ -232,7 +234,7 @@ export class ErrorHandlingService {
    */
   updateProcessingStatus(
     uploadId: number,
-    updates: Partial<ProcessingStatus>
+    updates: Partial<ProcessingStatus>,
   ): ProcessingStatus {
     const currentStatus = this.processingStatus.get(uploadId) || {
       uploadId,
@@ -243,13 +245,13 @@ export class ErrorHandlingService {
       totalRecords: 0,
       errors: [],
       warnings: [],
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
     };
 
     const updatedStatus: ProcessingStatus = {
       ...currentStatus,
       ...updates,
-      lastUpdated: new Date()
+      lastUpdated: new Date(),
     };
 
     this.processingStatus.set(uploadId, updatedStatus);
@@ -268,7 +270,7 @@ export class ErrorHandlingService {
    */
   getErrorsForUpload(uploadId: number): ProcessingError[] {
     return Array.from(this.errors.values())
-      .filter(error => error.uploadId === uploadId)
+      .filter((error) => error.uploadId === uploadId)
       .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
   }
 
@@ -277,23 +279,31 @@ export class ErrorHandlingService {
    */
   getErrorSummary(uploadId: number): ErrorSummary {
     const errors = this.getErrorsForUpload(uploadId);
-    
-    const errorsByCategory = Object.values(ErrorCategory).reduce((acc, category) => {
-      acc[category] = errors.filter(e => e.category === category).length;
-      return acc;
-    }, {} as Record<ErrorCategory, number>);
 
-    const errorsBySeverity = Object.values(ErrorSeverity).reduce((acc, severity) => {
-      acc[severity] = errors.filter(e => e.severity === severity).length;
-      return acc;
-    }, {} as Record<ErrorSeverity, number>);
+    const errorsByCategory = Object.values(ErrorCategory).reduce(
+      (acc, category) => {
+        acc[category] = errors.filter((e) => e.category === category).length;
+        return acc;
+      },
+      {} as Record<ErrorCategory, number>,
+    );
 
-    const retryableErrors = errors.filter(e => e.retryable).length;
-    const criticalErrors = errors.filter(e => e.severity === ErrorSeverity.CRITICAL).length;
+    const errorsBySeverity = Object.values(ErrorSeverity).reduce(
+      (acc, severity) => {
+        acc[severity] = errors.filter((e) => e.severity === severity).length;
+        return acc;
+      },
+      {} as Record<ErrorSeverity, number>,
+    );
+
+    const retryableErrors = errors.filter((e) => e.retryable).length;
+    const criticalErrors = errors.filter(
+      (e) => e.severity === ErrorSeverity.CRITICAL,
+    ).length;
 
     // Find common errors
     const errorCounts = new Map<string, number>();
-    errors.forEach(error => {
+    errors.forEach((error) => {
       const count = errorCounts.get(error.message) || 0;
       errorCounts.set(error.message, count + 1);
     });
@@ -309,7 +319,7 @@ export class ErrorHandlingService {
       errorsBySeverity,
       retryableErrors,
       criticalErrors,
-      commonErrors
+      commonErrors,
     };
   }
 
@@ -320,11 +330,11 @@ export class ErrorHandlingService {
     const errors = this.getErrorsForUpload(uploadId);
     const suggestions: Array<{ error: string; fix: string }> = [];
 
-    errors.forEach(error => {
+    errors.forEach((error) => {
       if (error.suggestedFix) {
         suggestions.push({
           error: error.message,
-          fix: error.suggestedFix
+          fix: error.suggestedFix,
         });
       }
     });
@@ -340,15 +350,14 @@ export class ErrorHandlingService {
       .filter(([_, error]) => error.uploadId === uploadId)
       .map(([id, _]) => id);
 
-    errorsToDelete.forEach(id => this.errors.delete(id));
+    errorsToDelete.forEach((id) => this.errors.delete(id));
   }
 
   /**
    * Gets retryable errors for an upload
    */
   getRetryableErrors(uploadId: number): ProcessingError[] {
-    return this.getErrorsForUpload(uploadId)
-      .filter(error => error.retryable);
+    return this.getErrorsForUpload(uploadId).filter((error) => error.retryable);
   }
 
   /**
@@ -368,16 +377,22 @@ export class ErrorHandlingService {
     activeUploads: number;
   } {
     const allErrors = Array.from(this.errors.values());
-    
-    const errorsByCategory = Object.values(ErrorCategory).reduce((acc, category) => {
-      acc[category] = allErrors.filter(e => e.category === category).length;
-      return acc;
-    }, {} as Record<ErrorCategory, number>);
 
-    const errorsBySeverity = Object.values(ErrorSeverity).reduce((acc, severity) => {
-      acc[severity] = allErrors.filter(e => e.severity === severity).length;
-      return acc;
-    }, {} as Record<ErrorSeverity, number>);
+    const errorsByCategory = Object.values(ErrorCategory).reduce(
+      (acc, category) => {
+        acc[category] = allErrors.filter((e) => e.category === category).length;
+        return acc;
+      },
+      {} as Record<ErrorCategory, number>,
+    );
+
+    const errorsBySeverity = Object.values(ErrorSeverity).reduce(
+      (acc, severity) => {
+        acc[severity] = allErrors.filter((e) => e.severity === severity).length;
+        return acc;
+      },
+      {} as Record<ErrorSeverity, number>,
+    );
 
     const activeUploads = this.processingStatus.size;
 
@@ -385,7 +400,7 @@ export class ErrorHandlingService {
       totalErrors: allErrors.length,
       errorsByCategory,
       errorsBySeverity,
-      activeUploads
+      activeUploads,
     };
   }
 
@@ -404,7 +419,7 @@ export class ErrorHandlingService {
         message: 'No file provided',
         suggestedFix: 'Please select a CSV file to upload',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
       return errors;
     }
@@ -418,7 +433,7 @@ export class ErrorHandlingService {
         message: 'File must be a CSV file',
         suggestedFix: 'Please upload a file with .csv extension',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
@@ -432,7 +447,7 @@ export class ErrorHandlingService {
         message: `File size exceeds limit (${Math.round(file.size / 1024 / 1024)}MB > 10MB)`,
         suggestedFix: 'Please reduce file size to under 10MB',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
@@ -445,7 +460,7 @@ export class ErrorHandlingService {
         message: 'File is very small, may not contain valid CSV data',
         suggestedFix: 'Please check if the file contains valid CSV data',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
@@ -467,18 +482,19 @@ export class ErrorHandlingService {
         message: 'Column mapping is required',
         suggestedFix: 'Please provide a valid column mapping',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
       return errors;
     }
 
     // Check required fields
     const requiredFields = ['businessName', 'email', 'website'];
-    const mappedFields: string[] = Object.values(mapping).filter((field): field is string => 
-      typeof field === 'string' && field.trim() !== ''
+    const mappedFields: string[] = Object.values(mapping).filter(
+      (field): field is string =>
+        typeof field === 'string' && field.trim() !== '',
     );
-    const hasRequiredField = requiredFields.some(field => 
-      mappedFields.includes(field)
+    const hasRequiredField = requiredFields.some((field) =>
+      mappedFields.includes(field),
     );
 
     if (!hasRequiredField) {
@@ -486,18 +502,23 @@ export class ErrorHandlingService {
         id: this.generateErrorId(),
         category: ErrorCategory.MAPPING_ERROR,
         severity: ErrorSeverity.HIGH,
-        message: 'At least one of businessName, email, or website must be mapped',
-        suggestedFix: 'Please map at least one of the required fields: businessName, email, or website',
+        message:
+          'At least one of businessName, email, or website must be mapped',
+        suggestedFix:
+          'Please map at least one of the required fields: businessName, email, or website',
         retryable: false,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
     // Check for duplicate mappings
-    const fieldCounts: Record<string, number> = mappedFields.reduce((acc: Record<string, number>, field: string) => {
-      acc[field] = (acc[field] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const fieldCounts: Record<string, number> = mappedFields.reduce(
+      (acc: Record<string, number>, field: string) => {
+        acc[field] = (acc[field] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
     Object.entries(fieldCounts).forEach(([field, count]) => {
       if (count > 1) {
@@ -508,7 +529,7 @@ export class ErrorHandlingService {
           message: `Field "${field}" is mapped to multiple columns`,
           suggestedFix: 'Please ensure each field is mapped to only one column',
           retryable: false,
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       }
     });

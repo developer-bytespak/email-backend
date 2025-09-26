@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ErrorHandlingService, ProcessingStatus } from './error-handling.service';
+import {
+  ErrorHandlingService,
+  ProcessingStatus,
+} from './error-handling.service';
 import { UserFeedbackService, RealTimeUpdate } from './user-feedback.service';
 
 export interface ProgressStep {
@@ -31,61 +34,64 @@ export class ProgressTrackingService {
       name: 'File Upload',
       description: 'Uploading and validating CSV file',
       weight: 5,
-      estimatedDuration: 2000
+      estimatedDuration: 2000,
     },
     {
       id: 'column_mapping',
       name: 'Column Mapping',
       description: 'Mapping CSV columns to system fields',
       weight: 10,
-      estimatedDuration: 3000
+      estimatedDuration: 3000,
     },
     {
       id: 'data_parsing',
       name: 'Data Parsing',
       description: 'Parsing CSV data and validating format',
       weight: 15,
-      estimatedDuration: 5000
+      estimatedDuration: 5000,
     },
     {
       id: 'validation',
       name: 'Data Validation',
       description: 'Validating contact information',
       weight: 25,
-      estimatedDuration: 15000
+      estimatedDuration: 15000,
     },
     {
       id: 'duplicate_detection',
       name: 'Duplicate Detection',
       description: 'Checking for duplicate contacts',
       weight: 15,
-      estimatedDuration: 10000
+      estimatedDuration: 10000,
     },
     {
       id: 'website_resolution',
       name: 'Website Resolution',
       description: 'Resolving websites from business names',
       weight: 20,
-      estimatedDuration: 20000
+      estimatedDuration: 20000,
     },
     {
       id: 'finalization',
       name: 'Finalization',
       description: 'Saving results and generating report',
       weight: 10,
-      estimatedDuration: 5000
-    }
+      estimatedDuration: 5000,
+    },
   ];
 
   constructor(
     private readonly errorHandlingService: ErrorHandlingService,
-    private readonly userFeedbackService: UserFeedbackService
+    private readonly userFeedbackService: UserFeedbackService,
   ) {}
 
   /**
    * Initializes progress tracking for an upload
    */
-  initializeProgressTracking(uploadId: number, totalRecords: number): ProgressTracker {
+  initializeProgressTracking(
+    uploadId: number,
+    totalRecords: number,
+  ): ProgressTracker {
     const tracker: ProgressTracker = {
       uploadId,
       currentStep: 'file_upload',
@@ -94,11 +100,11 @@ export class ProgressTrackingService {
       estimatedTimeRemaining: this.calculateTotalEstimatedTime(),
       startTime: new Date(),
       lastUpdate: new Date(),
-      steps: [...this.stepDefinitions]
+      steps: [...this.stepDefinitions],
     };
 
     this.progressTrackers.set(uploadId, tracker);
-    
+
     // Initialize processing status
     this.errorHandlingService.updateProcessingStatus(uploadId, {
       status: 'pending',
@@ -107,7 +113,7 @@ export class ProgressTrackingService {
       totalRecords,
       processedRecords: 0,
       errors: [],
-      warnings: []
+      warnings: [],
     });
 
     this.logger.log(`Progress tracking initialized for upload ${uploadId}`);
@@ -122,14 +128,14 @@ export class ProgressTrackingService {
     stepId: string,
     stepProgress: number,
     processedRecords: number,
-    totalRecords: number
+    totalRecords: number,
   ): RealTimeUpdate {
     const tracker = this.progressTrackers.get(uploadId);
     if (!tracker) {
       throw new Error(`Progress tracker not found for upload ${uploadId}`);
     }
 
-    const step = tracker.steps.find(s => s.id === stepId);
+    const step = tracker.steps.find((s) => s.id === stepId);
     if (!step) {
       throw new Error(`Step ${stepId} not found`);
     }
@@ -140,16 +146,25 @@ export class ProgressTrackingService {
     }
 
     // Calculate overall progress
-    const completedStepsWeight = tracker.completedSteps.reduce((total, completedStepId) => {
-      const completedStep = tracker.steps.find(s => s.id === completedStepId);
-      return total + (completedStep?.weight || 0);
-    }, 0);
+    const completedStepsWeight = tracker.completedSteps.reduce(
+      (total, completedStepId) => {
+        const completedStep = tracker.steps.find(
+          (s) => s.id === completedStepId,
+        );
+        return total + (completedStep?.weight || 0);
+      },
+      0,
+    );
 
     const currentStepProgress = (stepProgress / 100) * step.weight;
-    tracker.progress = Math.min(100, completedStepsWeight + currentStepProgress);
+    tracker.progress = Math.min(
+      100,
+      completedStepsWeight + currentStepProgress,
+    );
 
     // Update estimated time remaining
-    tracker.estimatedTimeRemaining = this.calculateEstimatedTimeRemaining(tracker);
+    tracker.estimatedTimeRemaining =
+      this.calculateEstimatedTimeRemaining(tracker);
 
     // Update processing status
     this.errorHandlingService.updateProcessingStatus(uploadId, {
@@ -158,7 +173,7 @@ export class ProgressTrackingService {
       progress: Math.round(tracker.progress),
       processedRecords,
       totalRecords,
-      estimatedTimeRemaining: tracker.estimatedTimeRemaining
+      estimatedTimeRemaining: tracker.estimatedTimeRemaining,
     });
 
     tracker.lastUpdate = new Date();
@@ -169,10 +184,12 @@ export class ProgressTrackingService {
       step.name,
       Math.round(tracker.progress),
       `${step.description} - ${processedRecords}/${totalRecords} records processed`,
-      tracker.estimatedTimeRemaining
+      tracker.estimatedTimeRemaining,
     );
 
-    this.logger.debug(`Progress updated for upload ${uploadId}: ${step.name} - ${Math.round(tracker.progress)}%`);
+    this.logger.debug(
+      `Progress updated for upload ${uploadId}: ${step.name} - ${Math.round(tracker.progress)}%`,
+    );
     return update;
   }
 
@@ -185,7 +202,7 @@ export class ProgressTrackingService {
       throw new Error(`Progress tracker not found for upload ${uploadId}`);
     }
 
-    const step = tracker.steps.find(s => s.id === stepId);
+    const step = tracker.steps.find((s) => s.id === stepId);
     if (!step) {
       throw new Error(`Step ${stepId} not found`);
     }
@@ -196,13 +213,19 @@ export class ProgressTrackingService {
     }
 
     // Update progress
-    const completedWeight = tracker.completedSteps.reduce((total, completedStepId) => {
-      const completedStep = tracker.steps.find(s => s.id === completedStepId);
-      return total + (completedStep?.weight || 0);
-    }, 0);
+    const completedWeight = tracker.completedSteps.reduce(
+      (total, completedStepId) => {
+        const completedStep = tracker.steps.find(
+          (s) => s.id === completedStepId,
+        );
+        return total + (completedStep?.weight || 0);
+      },
+      0,
+    );
 
     tracker.progress = Math.min(100, completedWeight);
-    tracker.estimatedTimeRemaining = this.calculateEstimatedTimeRemaining(tracker);
+    tracker.estimatedTimeRemaining =
+      this.calculateEstimatedTimeRemaining(tracker);
 
     // Move to next step
     const nextStep = this.getNextStep(tracker);
@@ -213,7 +236,7 @@ export class ProgressTrackingService {
     // Update processing status
     this.errorHandlingService.updateProcessingStatus(uploadId, {
       currentStep: nextStep?.name || 'Completed',
-      progress: Math.round(tracker.progress)
+      progress: Math.round(tracker.progress),
     });
 
     tracker.lastUpdate = new Date();
@@ -224,7 +247,7 @@ export class ProgressTrackingService {
       nextStep?.name || 'Completed',
       Math.round(tracker.progress),
       nextStep ? `Starting ${nextStep.description}` : 'Processing completed',
-      tracker.estimatedTimeRemaining
+      tracker.estimatedTimeRemaining,
     );
 
     this.logger.log(`Step completed for upload ${uploadId}: ${step.name}`);
@@ -234,7 +257,10 @@ export class ProgressTrackingService {
   /**
    * Completes progress tracking
    */
-  completeProgressTracking(uploadId: number, status: 'success' | 'failed'): void {
+  completeProgressTracking(
+    uploadId: number,
+    status: 'success' | 'failed',
+  ): void {
     const tracker = this.progressTrackers.get(uploadId);
     if (!tracker) {
       this.logger.warn(`Progress tracker not found for upload ${uploadId}`);
@@ -242,7 +268,7 @@ export class ProgressTrackingService {
     }
 
     // Mark all remaining steps as completed
-    tracker.steps.forEach(step => {
+    tracker.steps.forEach((step) => {
       if (!tracker.completedSteps.includes(step.id)) {
         tracker.completedSteps.push(step.id);
       }
@@ -256,12 +282,14 @@ export class ProgressTrackingService {
     this.errorHandlingService.updateProcessingStatus(uploadId, {
       status: status === 'success' ? 'completed' : 'failed',
       currentStep: 'Completed',
-      progress: 100
+      progress: 100,
     });
 
     tracker.lastUpdate = new Date();
 
-    this.logger.log(`Progress tracking completed for upload ${uploadId}: ${status}`);
+    this.logger.log(
+      `Progress tracking completed for upload ${uploadId}: ${status}`,
+    );
   }
 
   /**
@@ -282,46 +310,60 @@ export class ProgressTrackingService {
    * Calculates total estimated time for all steps
    */
   private calculateTotalEstimatedTime(): number {
-    return this.stepDefinitions.reduce((total, step) => total + step.estimatedDuration, 0);
+    return this.stepDefinitions.reduce(
+      (total, step) => total + step.estimatedDuration,
+      0,
+    );
   }
 
   /**
    * Calculates estimated time remaining based on completed steps
    */
   private calculateEstimatedTimeRemaining(tracker: ProgressTracker): number {
-    const remainingSteps = tracker.steps.filter(step => 
-      !tracker.completedSteps.includes(step.id)
+    const remainingSteps = tracker.steps.filter(
+      (step) => !tracker.completedSteps.includes(step.id),
     );
 
-    return remainingSteps.reduce((total, step) => total + step.estimatedDuration, 0);
+    return remainingSteps.reduce(
+      (total, step) => total + step.estimatedDuration,
+      0,
+    );
   }
 
   /**
    * Gets the next step to be executed
    */
   private getNextStep(tracker: ProgressTracker): ProgressStep | null {
-    return tracker.steps.find(step => 
-      !tracker.completedSteps.includes(step.id)
-    ) || null;
+    return (
+      tracker.steps.find((step) => !tracker.completedSteps.includes(step.id)) ||
+      null
+    );
   }
 
   /**
    * Updates estimated time based on actual processing speed
    */
-  updateEstimatedTime(uploadId: number, actualProcessingTime: number, recordsProcessed: number): void {
+  updateEstimatedTime(
+    uploadId: number,
+    actualProcessingTime: number,
+    recordsProcessed: number,
+  ): void {
     const tracker = this.progressTrackers.get(uploadId);
     if (!tracker) return;
 
     const timePerRecord = actualProcessingTime / recordsProcessed;
     const remainingRecords = tracker.steps
-      .filter(step => !tracker.completedSteps.includes(step.id))
+      .filter((step) => !tracker.completedSteps.includes(step.id))
       .reduce((total, step) => {
         // Estimate records per step based on step weight
         const estimatedRecordsForStep = (step.weight / 100) * recordsProcessed;
         return total + estimatedRecordsForStep;
       }, 0);
 
-    tracker.estimatedTimeRemaining = Math.max(0, timePerRecord * remainingRecords);
+    tracker.estimatedTimeRemaining = Math.max(
+      0,
+      timePerRecord * remainingRecords,
+    );
     tracker.lastUpdate = new Date();
   }
 
@@ -335,26 +377,30 @@ export class ProgressTrackingService {
     completedToday: number;
   } {
     const trackers = Array.from(this.progressTrackers.values());
-    
+
     const activeUploads = trackers.length;
-    const averageProgress = trackers.length > 0 
-      ? trackers.reduce((sum, t) => sum + t.progress, 0) / trackers.length
-      : 0;
-    const averageTimeRemaining = trackers.length > 0
-      ? trackers.reduce((sum, t) => sum + t.estimatedTimeRemaining, 0) / trackers.length
-      : 0;
+    const averageProgress =
+      trackers.length > 0
+        ? trackers.reduce((sum, t) => sum + t.progress, 0) / trackers.length
+        : 0;
+    const averageTimeRemaining =
+      trackers.length > 0
+        ? trackers.reduce((sum, t) => sum + t.estimatedTimeRemaining, 0) /
+          trackers.length
+        : 0;
 
     // Calculate completed today (this would need to be tracked separately in a real implementation)
-    const completedToday = trackers.filter(t => 
-      t.progress === 100 && 
-      t.lastUpdate.toDateString() === new Date().toDateString()
+    const completedToday = trackers.filter(
+      (t) =>
+        t.progress === 100 &&
+        t.lastUpdate.toDateString() === new Date().toDateString(),
     ).length;
 
     return {
       activeUploads,
       averageProgress,
       averageTimeRemaining,
-      completedToday
+      completedToday,
     };
   }
 
@@ -363,11 +409,13 @@ export class ProgressTrackingService {
    */
   cleanupCompletedTrackers(): void {
     const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours ago
-    
+
     for (const [uploadId, tracker] of this.progressTrackers.entries()) {
       if (tracker.progress === 100 && tracker.lastUpdate < cutoffTime) {
         this.progressTrackers.delete(uploadId);
-        this.logger.debug(`Cleaned up completed tracker for upload ${uploadId}`);
+        this.logger.debug(
+          `Cleaned up completed tracker for upload ${uploadId}`,
+        );
       }
     }
   }

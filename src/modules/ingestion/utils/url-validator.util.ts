@@ -6,7 +6,8 @@ export interface UrlValidationResult {
 }
 
 export class UrlValidatorUtil {
-  private static readonly urlRegex = /^https?:\/\/(?:[-\w.])+(?:\:[0-9]+)?(?:\/(?:[\w\/_.])*(?:\?(?:[\w&=%.])*)?(?:\#(?:[\w.])*)?)?$/i;
+  private static readonly urlRegex =
+    /^https?:\/\/(?:[-\w.])+(?:\:[0-9]+)?(?:\/(?:[\w\/_.])*(?:\?(?:[\w&=%.])*)?(?:\#(?:[\w.])*)?)?$/i;
 
   /**
    * Validates URL format
@@ -15,7 +16,7 @@ export class UrlValidatorUtil {
     if (!url || typeof url !== 'string') {
       return {
         isValid: false,
-        error: 'URL is required'
+        error: 'URL is required',
       };
     }
 
@@ -23,23 +24,23 @@ export class UrlValidatorUtil {
     if (trimmed.length === 0) {
       return {
         isValid: false,
-        error: 'URL cannot be empty'
+        error: 'URL cannot be empty',
       };
     }
 
     // Try to normalize the URL first
     const normalized = this.normalizeUrl(trimmed);
-    
+
     if (!this.urlRegex.test(normalized)) {
       return {
         isValid: false,
-        error: 'Invalid URL format'
+        error: 'Invalid URL format',
       };
     }
 
     return {
       isValid: true,
-      normalizedUrl: normalized
+      normalizedUrl: normalized,
     };
   }
 
@@ -50,7 +51,10 @@ export class UrlValidatorUtil {
     let normalized = url.trim().toLowerCase();
 
     // Add protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    if (
+      !normalized.startsWith('http://') &&
+      !normalized.startsWith('https://')
+    ) {
       normalized = 'https://' + normalized;
     }
 
@@ -103,16 +107,18 @@ export class UrlValidatorUtil {
       /wikipedia\.org/i,
       /amazon\.com/i,
       /ebay\.com/i,
-      /craigslist\.org/i
+      /craigslist\.org/i,
     ];
 
-    return !nonBusinessPatterns.some(pattern => pattern.test(domain));
+    return !nonBusinessPatterns.some((pattern) => pattern.test(domain));
   }
 
   /**
    * Validates URL accessibility (simplified check)
    */
-  static async validateUrlAccessibility(url: string): Promise<UrlValidationResult> {
+  static async validateUrlAccessibility(
+    url: string,
+  ): Promise<UrlValidationResult> {
     const formatResult = this.validateUrlFormat(url);
     if (!formatResult.isValid) {
       return formatResult;
@@ -126,8 +132,8 @@ export class UrlValidatorUtil {
         method: 'HEAD',
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)'
-        }
+          'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)',
+        },
       });
 
       clearTimeout(timeoutId);
@@ -136,14 +142,16 @@ export class UrlValidatorUtil {
         isValid: response.ok,
         normalizedUrl: formatResult.normalizedUrl,
         isAccessible: response.ok,
-        error: response.ok ? undefined : `HTTP ${response.status}: ${response.statusText}`
+        error: response.ok
+          ? undefined
+          : `HTTP ${response.status}: ${response.statusText}`,
       };
     } catch (error) {
       return {
         isValid: false,
         normalizedUrl: formatResult.normalizedUrl,
         isAccessible: false,
-        error: `Accessibility check failed: ${error.message}`
+        error: `Accessibility check failed: ${error.message}`,
       };
     }
   }
@@ -170,16 +178,18 @@ export class UrlValidatorUtil {
       /\.wixsite\.com$/i,
       /\.squarespace\.com$/i,
       /\.weebly\.com$/i,
-      /\.tumblr\.com$/i
+      /\.tumblr\.com$/i,
     ];
 
-    return freeHostingPatterns.some(pattern => pattern.test(domain));
+    return freeHostingPatterns.some((pattern) => pattern.test(domain));
   }
 
   /**
    * Gets URL category for business analysis
    */
-  static getUrlCategory(url: string): 'business' | 'social' | 'ecommerce' | 'free_hosting' | 'unknown' {
+  static getUrlCategory(
+    url: string,
+  ): 'business' | 'social' | 'ecommerce' | 'free_hosting' | 'unknown' {
     const domain = this.extractDomain(url);
     if (!domain) return 'unknown';
 
@@ -196,10 +206,10 @@ export class UrlValidatorUtil {
       /youtube\.com/i,
       /tiktok\.com/i,
       /pinterest\.com/i,
-      /reddit\.com/i
+      /reddit\.com/i,
     ];
 
-    if (socialPatterns.some(pattern => pattern.test(domain))) {
+    if (socialPatterns.some((pattern) => pattern.test(domain))) {
       return 'social';
     }
 
@@ -211,10 +221,10 @@ export class UrlValidatorUtil {
       /etsy\.com/i,
       /alibaba\.com/i,
       /walmart\.com/i,
-      /target\.com/i
+      /target\.com/i,
     ];
 
-    if (ecommercePatterns.some(pattern => pattern.test(domain))) {
+    if (ecommercePatterns.some((pattern) => pattern.test(domain))) {
       return 'ecommerce';
     }
 

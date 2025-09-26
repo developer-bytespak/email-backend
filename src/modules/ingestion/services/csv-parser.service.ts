@@ -14,7 +14,7 @@ export interface ParsedRow {
 @Injectable()
 export class CsvParserService {
   parseCsvData(csvContent: string, mapping: ColumnMappingDto): ParsedRow[] {
-    const lines = csvContent.split('\n').filter(line => line.trim());
+    const lines = csvContent.split('\n').filter((line) => line.trim());
     if (lines.length < 2) {
       throw new Error('CSV file must have at least a header and one data row');
     }
@@ -29,7 +29,7 @@ export class CsvParserService {
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = this.parseCsvLine(dataRows[i]);
-      
+
       try {
         const parsedRow = this.mapRowToFields(row, columnIndexes);
         parsedRows.push(parsedRow);
@@ -46,10 +46,10 @@ export class CsvParserService {
     const result: string[] = [];
     let current = '';
     let inQuotes = false;
-    
+
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
-      
+
       if (char === '"') {
         inQuotes = !inQuotes;
       } else if (char === ',' && !inQuotes) {
@@ -59,20 +59,24 @@ export class CsvParserService {
         current += char;
       }
     }
-    
+
     result.push(current.trim());
     return result;
   }
 
-  private createColumnIndexes(headers: string[], mapping: ColumnMappingDto): Record<string, number> {
+  private createColumnIndexes(
+    headers: string[],
+    mapping: ColumnMappingDto,
+  ): Record<string, number> {
     const indexes: Record<string, number> = {};
-    
+
     // Map each field to its column index
     Object.entries(mapping).forEach(([field, columnName]) => {
-      const index = headers.findIndex(header => 
-        header.toLowerCase().trim() === columnName.toLowerCase().trim()
+      const index = headers.findIndex(
+        (header) =>
+          header.toLowerCase().trim() === columnName.toLowerCase().trim(),
       );
-      
+
       if (index !== -1) {
         indexes[field] = index;
       }
@@ -81,7 +85,10 @@ export class CsvParserService {
     return indexes;
   }
 
-  private mapRowToFields(row: string[], columnIndexes: Record<string, number>): ParsedRow {
+  private mapRowToFields(
+    row: string[],
+    columnIndexes: Record<string, number>,
+  ): ParsedRow {
     const parsedRow: ParsedRow = {
       businessName: '',
     };
@@ -89,7 +96,7 @@ export class CsvParserService {
     // Extract values based on column indexes
     Object.entries(columnIndexes).forEach(([field, index]) => {
       const value = row[index]?.trim() || '';
-      
+
       switch (field) {
         case 'businessName':
           parsedRow.businessName = value;
@@ -124,8 +131,8 @@ export class CsvParserService {
   }
 
   validateCsvFormat(csvContent: string): { isValid: boolean; error?: string } {
-    const lines = csvContent.split('\n').filter(line => line.trim());
-    
+    const lines = csvContent.split('\n').filter((line) => line.trim());
+
     if (lines.length < 2) {
       return {
         isValid: false,

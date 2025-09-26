@@ -25,7 +25,7 @@ export class RetryService {
    */
   async executeWithRetry<T>(
     operation: () => Promise<T>,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): Promise<RetryResult<T>> {
     const retryConfig: RetryConfig = {
       maxAttempts: 3,
@@ -33,7 +33,7 @@ export class RetryService {
       maxDelay: 30000,
       exponentialBackoff: true,
       jitter: true,
-      ...config
+      ...config,
     };
 
     const startTime = Date.now();
@@ -44,13 +44,15 @@ export class RetryService {
         const result = await operation();
         const totalTime = Date.now() - startTime;
 
-        this.logger.debug(`Operation succeeded on attempt ${attempt} in ${totalTime}ms`);
+        this.logger.debug(
+          `Operation succeeded on attempt ${attempt} in ${totalTime}ms`,
+        );
 
         return {
           success: true,
           result,
           attempts: attempt,
-          totalTime
+          totalTime,
         };
       } catch (error) {
         lastError = error as Error;
@@ -64,19 +66,21 @@ export class RetryService {
         // Calculate delay for next attempt
         const delay = this.calculateDelay(attempt, retryConfig);
         this.logger.debug(`Waiting ${delay}ms before retry ${attempt + 1}`);
-        
+
         await this.sleep(delay);
       }
     }
 
     const totalTime = Date.now() - startTime;
-    this.logger.error(`Operation failed after ${retryConfig.maxAttempts} attempts in ${totalTime}ms`);
+    this.logger.error(
+      `Operation failed after ${retryConfig.maxAttempts} attempts in ${totalTime}ms`,
+    );
 
     return {
       success: false,
       error: lastError!,
       attempts: retryConfig.maxAttempts,
-      totalTime
+      totalTime,
     };
   }
 
@@ -85,13 +89,13 @@ export class RetryService {
    */
   async executeMultipleWithRetry<T>(
     operations: Array<() => Promise<T>>,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): Promise<Array<RetryResult<T>>> {
     const results = await Promise.allSettled(
-      operations.map(operation => this.executeWithRetry(operation, config))
+      operations.map((operation) => this.executeWithRetry(operation, config)),
     );
 
-    return results.map(result => {
+    return results.map((result) => {
       if (result.status === 'fulfilled') {
         return result.value;
       } else {
@@ -99,7 +103,7 @@ export class RetryService {
           success: false,
           error: result.reason,
           attempts: 0,
-          totalTime: 0
+          totalTime: 0,
         };
       }
     });
@@ -114,13 +118,13 @@ export class RetryService {
       failureThreshold: number;
       timeout: number;
       resetTimeout: number;
-    }
+    },
   ): Promise<RetryResult<T>> {
     // This is a simplified circuit breaker implementation
     // In production, you'd use a library like opossum or implement a more robust version
-    
+
     const startTime = Date.now();
-    
+
     try {
       const result = await operation();
       const totalTime = Date.now() - startTime;
@@ -129,18 +133,20 @@ export class RetryService {
         success: true,
         result,
         attempts: 1,
-        totalTime
+        totalTime,
       };
     } catch (error) {
       const totalTime = Date.now() - startTime;
-      
-      this.logger.error(`Circuit breaker operation failed: ${(error as Error).message}`);
+
+      this.logger.error(
+        `Circuit breaker operation failed: ${(error as Error).message}`,
+      );
 
       return {
         success: false,
         error: error as Error,
         attempts: 1,
-        totalTime
+        totalTime,
       };
     }
   }
@@ -172,7 +178,7 @@ export class RetryService {
    * Sleeps for specified milliseconds
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**
@@ -180,14 +186,14 @@ export class RetryService {
    */
   async retryHttpRequest<T>(
     requestFn: () => Promise<T>,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): Promise<RetryResult<T>> {
     return this.executeWithRetry(requestFn, {
       maxAttempts: 3,
       baseDelay: 1000,
       exponentialBackoff: true,
       jitter: true,
-      ...config
+      ...config,
     });
   }
 
@@ -196,14 +202,14 @@ export class RetryService {
    */
   async retryDatabaseOperation<T>(
     operation: () => Promise<T>,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): Promise<RetryResult<T>> {
     return this.executeWithRetry(operation, {
       maxAttempts: 3,
       baseDelay: 500,
       exponentialBackoff: true,
       jitter: false,
-      ...config
+      ...config,
     });
   }
 
@@ -212,7 +218,7 @@ export class RetryService {
    */
   async retryExternalApiCall<T>(
     apiCall: () => Promise<T>,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): Promise<RetryResult<T>> {
     return this.executeWithRetry(apiCall, {
       maxAttempts: 2,
@@ -220,7 +226,7 @@ export class RetryService {
       maxDelay: 10000,
       exponentialBackoff: true,
       jitter: true,
-      ...config
+      ...config,
     });
   }
 
@@ -235,7 +241,7 @@ export class RetryService {
       'ENOTFOUND',
       'ECONNABORTED',
       'ENETUNREACH',
-      'EHOSTUNREACH'
+      'EHOSTUNREACH',
     ];
 
     const retryableMessages = [
@@ -246,20 +252,24 @@ export class RetryService {
       'unavailable',
       'service unavailable',
       'rate limit',
-      'too many requests'
+      'too many requests',
     ];
 
     const errorMessage = error.message.toLowerCase();
     const errorCode = (error as any).code;
 
-    return retryableErrors.includes(errorCode) ||
-           retryableMessages.some(message => errorMessage.includes(message));
+    return (
+      retryableErrors.includes(errorCode) ||
+      retryableMessages.some((message) => errorMessage.includes(message))
+    );
   }
 
   /**
    * Gets default retry configuration for different operation types
    */
-  getDefaultConfig(operationType: 'http' | 'database' | 'external-api' | 'file'): RetryConfig {
+  getDefaultConfig(
+    operationType: 'http' | 'database' | 'external-api' | 'file',
+  ): RetryConfig {
     switch (operationType) {
       case 'http':
         return {
@@ -267,7 +277,7 @@ export class RetryService {
           baseDelay: 1000,
           maxDelay: 10000,
           exponentialBackoff: true,
-          jitter: true
+          jitter: true,
         };
       case 'database':
         return {
@@ -275,7 +285,7 @@ export class RetryService {
           baseDelay: 500,
           maxDelay: 5000,
           exponentialBackoff: true,
-          jitter: false
+          jitter: false,
         };
       case 'external-api':
         return {
@@ -283,7 +293,7 @@ export class RetryService {
           baseDelay: 2000,
           maxDelay: 15000,
           exponentialBackoff: true,
-          jitter: true
+          jitter: true,
         };
       case 'file':
         return {
@@ -291,7 +301,7 @@ export class RetryService {
           baseDelay: 1000,
           maxDelay: 5000,
           exponentialBackoff: false,
-          jitter: false
+          jitter: false,
         };
       default:
         return {
@@ -299,7 +309,7 @@ export class RetryService {
           baseDelay: 1000,
           maxDelay: 10000,
           exponentialBackoff: true,
-          jitter: true
+          jitter: true,
         };
     }
   }
@@ -309,13 +319,10 @@ export class RetryService {
    */
   createRetryWrapper<T extends (...args: any[]) => Promise<any>>(
     fn: T,
-    config: Partial<RetryConfig> = {}
+    config: Partial<RetryConfig> = {},
   ): T {
     return (async (...args: Parameters<T>) => {
-      const result = await this.executeWithRetry(
-        () => fn(...args),
-        config
-      );
+      const result = await this.executeWithRetry(() => fn(...args), config);
 
       if (result.success) {
         return result.result;

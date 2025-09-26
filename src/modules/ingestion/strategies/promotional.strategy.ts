@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { Contact } from '@prisma/client';
-import { ProcessingStrategy, ValidationResult } from './processing-strategy.interface';
+import {
+  ProcessingStrategy,
+  ValidationResult,
+} from './processing-strategy.interface';
 
 @Injectable()
 export class PromotionalStrategy implements ProcessingStrategy {
@@ -20,7 +23,7 @@ export class PromotionalStrategy implements ProcessingStrategy {
   async validateContact(contact: Contact): Promise<ValidationResult> {
     // Promotional plan: Email validation only
     const validation = this.validateEmail(contact.email);
-    
+
     if (!validation.isValid) {
       return {
         isValid: false,
@@ -62,8 +65,14 @@ export class PromotionalStrategy implements ProcessingStrategy {
 
     // Check for free email domains
     const freeEmailDomains = [
-      'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-      'protonmail.com', 'icloud.com', 'aol.com', 'live.com'
+      'gmail.com',
+      'yahoo.com',
+      'hotmail.com',
+      'outlook.com',
+      'protonmail.com',
+      'icloud.com',
+      'aol.com',
+      'live.com',
     ];
 
     const domain = email.split('@')[1]?.toLowerCase();

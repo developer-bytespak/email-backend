@@ -25,7 +25,9 @@ export class ColumnMapperService {
 
     // Map each field if the mapping exists
     if (mapping.businessName && row[mapping.businessName]) {
-      mappedRow.businessName = this.normalizeBusinessName(row[mapping.businessName]);
+      mappedRow.businessName = this.normalizeBusinessName(
+        row[mapping.businessName],
+      );
     }
 
     if (mapping.email && row[mapping.email]) {
@@ -41,7 +43,9 @@ export class ColumnMapperService {
     }
 
     if (mapping.stateProvince && row[mapping.stateProvince]) {
-      mappedRow.stateProvince = this.normalizeStateProvince(row[mapping.stateProvince]);
+      mappedRow.stateProvince = this.normalizeStateProvince(
+        row[mapping.stateProvince],
+      );
     }
 
     if (mapping.zip && row[mapping.zip]) {
@@ -58,34 +62,44 @@ export class ColumnMapperService {
   /**
    * Validates that required fields are mapped
    */
-  validateMapping(mapping: ColumnMappingDto): { isValid: boolean; errors: string[] } {
+  validateMapping(mapping: ColumnMappingDto): {
+    isValid: boolean;
+    errors: string[];
+  } {
     const errors: string[] = [];
-    const mappedFields = Object.values(mapping).filter(field => field && field.trim() !== '');
-    
+    const mappedFields = Object.values(mapping).filter(
+      (field) => field && field.trim() !== '',
+    );
+
     // Check if at least one of the three required fields is mapped
-    const hasRequiredField = mappedFields.some(field => 
-      ['businessName', 'email', 'website'].includes(field)
+    const hasRequiredField = mappedFields.some((field) =>
+      ['businessName', 'email', 'website'].includes(field),
     );
 
     if (!hasRequiredField) {
-      errors.push('At least one of businessName, email, or website must be mapped');
+      errors.push(
+        'At least one of businessName, email, or website must be mapped',
+      );
     }
 
     // Check for duplicate mappings
-    const fieldCounts = mappedFields.reduce((acc, field) => {
-      acc[field] = (acc[field] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+    const fieldCounts = mappedFields.reduce(
+      (acc, field) => {
+        acc[field] = (acc[field] || 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>,
+    );
 
     Object.entries(fieldCounts).forEach(([field, count]) => {
-      if (count > 1) {
+      if ((count as number) > 1) {
         errors.push(`Field "${field}" is mapped to multiple columns`);
       }
     });
 
     return {
       isValid: errors.length === 0,
-      errors
+      errors,
     };
   }
 
@@ -94,7 +108,7 @@ export class ColumnMapperService {
    */
   suggestMapping(headers: string[]): Partial<ColumnMappingDto> {
     const suggestions: Partial<ColumnMappingDto> = {};
-    
+
     const fieldPatterns = {
       businessName: ['business', 'company', 'name', 'organization', 'firm'],
       email: ['email', 'e-mail', 'mail', 'contact'],
@@ -102,14 +116,14 @@ export class ColumnMapperService {
       phone: ['phone', 'telephone', 'mobile', 'cell', 'contact'],
       stateProvince: ['state', 'province', 'region', 'area'],
       zip: ['zip', 'postal', 'code', 'postcode'],
-      country: ['country', 'nation', 'location']
+      country: ['country', 'nation', 'location'],
     };
 
-    headers.forEach(header => {
+    headers.forEach((header) => {
       const normalizedHeader = header.toLowerCase().trim();
-      
+
       Object.entries(fieldPatterns).forEach(([field, patterns]) => {
-        if (patterns.some(pattern => normalizedHeader.includes(pattern))) {
+        if (patterns.some((pattern) => normalizedHeader.includes(pattern))) {
           suggestions[field as keyof ColumnMappingDto] = header;
         }
       });
@@ -128,17 +142,20 @@ export class ColumnMapperService {
 
   private normalizeWebsite(website: string): string {
     let normalized = website.trim().toLowerCase();
-    
+
     // Add protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    if (
+      !normalized.startsWith('http://') &&
+      !normalized.startsWith('https://')
+    ) {
       normalized = 'https://' + normalized;
     }
-    
+
     // Remove trailing slash
     if (normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1);
     }
-    
+
     return normalized;
   }
 

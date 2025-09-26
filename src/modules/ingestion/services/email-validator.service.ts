@@ -11,10 +11,22 @@ export interface EmailValidationResult {
 export class EmailValidatorService {
   private readonly emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   private readonly freeEmailDomains = [
-    'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-    'protonmail.com', 'icloud.com', 'aol.com', 'live.com',
-    'msn.com', 'zoho.com', 'mail.com', 'yandex.com',
-    'gmx.com', 'web.de', 'tutanota.com', 'fastmail.com'
+    'gmail.com',
+    'yahoo.com',
+    'hotmail.com',
+    'outlook.com',
+    'protonmail.com',
+    'icloud.com',
+    'aol.com',
+    'live.com',
+    'msn.com',
+    'zoho.com',
+    'mail.com',
+    'yandex.com',
+    'gmx.com',
+    'web.de',
+    'tutanota.com',
+    'fastmail.com',
   ];
 
   /**
@@ -24,7 +36,7 @@ export class EmailValidatorService {
     if (!email || typeof email !== 'string') {
       return {
         isValid: false,
-        reason: 'Email is required'
+        reason: 'Email is required',
       };
     }
 
@@ -34,7 +46,7 @@ export class EmailValidatorService {
     if (!this.emailRegex.test(trimmedEmail)) {
       return {
         isValid: false,
-        reason: 'Invalid email format'
+        reason: 'Invalid email format',
       };
     }
 
@@ -43,7 +55,7 @@ export class EmailValidatorService {
     if (!domain) {
       return {
         isValid: false,
-        reason: 'Invalid email domain'
+        reason: 'Invalid email domain',
       };
     }
 
@@ -54,7 +66,7 @@ export class EmailValidatorService {
         isValid: false,
         reason: 'Free email domains are not allowed',
         domain,
-        isFreeEmail: true
+        isFreeEmail: true,
       };
     }
 
@@ -65,14 +77,14 @@ export class EmailValidatorService {
         isValid: false,
         reason: 'Email domain does not exist',
         domain,
-        isFreeEmail: false
+        isFreeEmail: false,
       };
     }
 
     return {
       isValid: true,
       domain,
-      isFreeEmail: false
+      isFreeEmail: false,
     };
   }
 
@@ -81,7 +93,7 @@ export class EmailValidatorService {
    */
   async validateEmails(emails: string[]): Promise<EmailValidationResult[]> {
     const results = await Promise.all(
-      emails.map(email => this.validateEmail(email))
+      emails.map((email) => this.validateEmail(email)),
     );
     return results;
   }
@@ -97,7 +109,7 @@ export class EmailValidatorService {
       // const dns = require('dns').promises;
       // const mxRecords = await dns.resolveMx(domain);
       // return mxRecords.length > 0;
-      
+
       return true; // Placeholder - implement actual DNS lookup
     } catch (error) {
       return false;

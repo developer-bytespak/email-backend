@@ -28,7 +28,7 @@ export class ProcessingConfigService {
     retryAttempts: 3,
     retryDelay: 1000, // 1 second
     batchSize: 100,
-    concurrentProcessing: 5
+    concurrentProcessing: 5,
   };
 
   private readonly planFeatures: Record<string, PlanFeatures> = {
@@ -38,7 +38,7 @@ export class ProcessingConfigService {
       emailValidation: true,
       businessNameResolution: false,
       advancedDuplicateDetection: false,
-      externalAPIs: false
+      externalAPIs: false,
     },
     personal: {
       websiteResolution: true,
@@ -46,8 +46,8 @@ export class ProcessingConfigService {
       emailValidation: true,
       businessNameResolution: true,
       advancedDuplicateDetection: true,
-      externalAPIs: true
-    }
+      externalAPIs: true,
+    },
   };
 
   /**
@@ -56,13 +56,31 @@ export class ProcessingConfigService {
   getProcessingConfig(): ProcessingConfig {
     return {
       ...this.defaultConfig,
-      maxFileSize: parseInt(process.env.MAX_FILE_SIZE || this.defaultConfig.maxFileSize.toString()),
-      maxRecordsPerFile: parseInt(process.env.MAX_RECORDS_PER_FILE || this.defaultConfig.maxRecordsPerFile.toString()),
-      processingTimeout: parseInt(process.env.PROCESSING_TIMEOUT || this.defaultConfig.processingTimeout.toString()),
-      retryAttempts: parseInt(process.env.RETRY_ATTEMPTS || this.defaultConfig.retryAttempts.toString()),
-      retryDelay: parseInt(process.env.RETRY_DELAY || this.defaultConfig.retryDelay.toString()),
-      batchSize: parseInt(process.env.BATCH_SIZE || this.defaultConfig.batchSize.toString()),
-      concurrentProcessing: parseInt(process.env.CONCURRENT_PROCESSING || this.defaultConfig.concurrentProcessing.toString())
+      maxFileSize: parseInt(
+        process.env.MAX_FILE_SIZE || this.defaultConfig.maxFileSize.toString(),
+      ),
+      maxRecordsPerFile: parseInt(
+        process.env.MAX_RECORDS_PER_FILE ||
+          this.defaultConfig.maxRecordsPerFile.toString(),
+      ),
+      processingTimeout: parseInt(
+        process.env.PROCESSING_TIMEOUT ||
+          this.defaultConfig.processingTimeout.toString(),
+      ),
+      retryAttempts: parseInt(
+        process.env.RETRY_ATTEMPTS ||
+          this.defaultConfig.retryAttempts.toString(),
+      ),
+      retryDelay: parseInt(
+        process.env.RETRY_DELAY || this.defaultConfig.retryDelay.toString(),
+      ),
+      batchSize: parseInt(
+        process.env.BATCH_SIZE || this.defaultConfig.batchSize.toString(),
+      ),
+      concurrentProcessing: parseInt(
+        process.env.CONCURRENT_PROCESSING ||
+          this.defaultConfig.concurrentProcessing.toString(),
+      ),
     };
   }
 
@@ -96,12 +114,12 @@ export class ProcessingConfigService {
     return {
       googleSearch: {
         requests: parseInt(process.env.GOOGLE_SEARCH_RATE_LIMIT || '100'),
-        window: parseInt(process.env.GOOGLE_SEARCH_WINDOW || '86400000') // 24 hours
+        window: parseInt(process.env.GOOGLE_SEARCH_WINDOW || '86400000'), // 24 hours
       },
       websiteValidation: {
         requests: parseInt(process.env.WEBSITE_VALIDATION_RATE_LIMIT || '1000'),
-        window: parseInt(process.env.WEBSITE_VALIDATION_WINDOW || '3600000') // 1 hour
-      }
+        window: parseInt(process.env.WEBSITE_VALIDATION_WINDOW || '3600000'), // 1 hour
+      },
     };
   }
 
@@ -110,10 +128,12 @@ export class ProcessingConfigService {
    */
   getTimeouts(): Record<string, number> {
     return {
-      websiteValidation: parseInt(process.env.WEBSITE_VALIDATION_TIMEOUT || '10000'), // 10 seconds
+      websiteValidation: parseInt(
+        process.env.WEBSITE_VALIDATION_TIMEOUT || '10000',
+      ), // 10 seconds
       googleSearch: parseInt(process.env.GOOGLE_SEARCH_TIMEOUT || '5000'), // 5 seconds
       emailValidation: parseInt(process.env.EMAIL_VALIDATION_TIMEOUT || '3000'), // 3 seconds
-      dnsLookup: parseInt(process.env.DNS_LOOKUP_TIMEOUT || '5000') // 5 seconds
+      dnsLookup: parseInt(process.env.DNS_LOOKUP_TIMEOUT || '5000'), // 5 seconds
     };
   }
 
@@ -124,16 +144,16 @@ export class ProcessingConfigService {
     return {
       websiteValidation: {
         ttl: parseInt(process.env.WEBSITE_CACHE_TTL || '3600000'), // 1 hour
-        maxSize: parseInt(process.env.WEBSITE_CACHE_MAX_SIZE || '10000')
+        maxSize: parseInt(process.env.WEBSITE_CACHE_MAX_SIZE || '10000'),
       },
       emailValidation: {
         ttl: parseInt(process.env.EMAIL_CACHE_TTL || '86400000'), // 24 hours
-        maxSize: parseInt(process.env.EMAIL_CACHE_MAX_SIZE || '50000')
+        maxSize: parseInt(process.env.EMAIL_CACHE_MAX_SIZE || '50000'),
       },
       googleSearch: {
         ttl: parseInt(process.env.GOOGLE_CACHE_TTL || '86400000'), // 24 hours
-        maxSize: parseInt(process.env.GOOGLE_CACHE_MAX_SIZE || '5000')
-      }
+        maxSize: parseInt(process.env.GOOGLE_CACHE_MAX_SIZE || '5000'),
+      },
     };
   }
 
@@ -146,25 +166,30 @@ export class ProcessingConfigService {
         minLength: 5,
         maxLength: 254,
         allowedDomains: process.env.ALLOWED_EMAIL_DOMAINS?.split(',') || [],
-        blockedDomains: process.env.BLOCKED_EMAIL_DOMAINS?.split(',') || []
+        blockedDomains: process.env.BLOCKED_EMAIL_DOMAINS?.split(',') || [],
       },
       businessName: {
         minLength: 2,
         maxLength: 100,
         allowedCharacters: /^[\w\s\-&.,'()]+$/,
-        blockedWords: process.env.BLOCKED_BUSINESS_WORDS?.split(',') || ['test', 'example', 'sample', 'dummy']
+        blockedWords: process.env.BLOCKED_BUSINESS_WORDS?.split(',') || [
+          'test',
+          'example',
+          'sample',
+          'dummy',
+        ],
       },
       website: {
         minLength: 10,
         maxLength: 500,
         allowedProtocols: ['http:', 'https:'],
-        blockedDomains: process.env.BLOCKED_WEBSITE_DOMAINS?.split(',') || []
+        blockedDomains: process.env.BLOCKED_WEBSITE_DOMAINS?.split(',') || [],
       },
       phone: {
         minLength: 10,
         maxLength: 15,
-        allowedFormats: ['+1234567890', '1234567890', '(123) 456-7890']
-      }
+        allowedFormats: ['+1234567890', '1234567890', '(123) 456-7890'],
+      },
     };
   }
 
@@ -176,8 +201,12 @@ export class ProcessingConfigService {
       maxRetries: parseInt(process.env.MAX_RETRIES || '3'),
       retryDelay: parseInt(process.env.RETRY_DELAY || '1000'),
       exponentialBackoff: process.env.EXPONENTIAL_BACKOFF === 'true',
-      circuitBreakerThreshold: parseInt(process.env.CIRCUIT_BREAKER_THRESHOLD || '5'),
-      circuitBreakerTimeout: parseInt(process.env.CIRCUIT_BREAKER_TIMEOUT || '60000')
+      circuitBreakerThreshold: parseInt(
+        process.env.CIRCUIT_BREAKER_THRESHOLD || '5',
+      ),
+      circuitBreakerTimeout: parseInt(
+        process.env.CIRCUIT_BREAKER_TIMEOUT || '60000',
+      ),
     };
   }
 
@@ -221,7 +250,7 @@ export class ProcessingConfigService {
 
     return {
       isValid: errors.length === 0,
-      errors
+      errors,
     };
   }
 }

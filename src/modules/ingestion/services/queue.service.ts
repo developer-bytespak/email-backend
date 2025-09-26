@@ -30,13 +30,15 @@ export class QueueService {
     @InjectQueue('csv-processing') private csvProcessingQueue: Queue,
     @InjectQueue('email-validation') private emailValidationQueue: Queue,
     @InjectQueue('website-resolution') private websiteResolutionQueue: Queue,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
    * Adds CSV processing job to queue
    */
-  async addCsvProcessingJob(data: CsvProcessingJobData): Promise<Job<CsvProcessingJobData>> {
+  async addCsvProcessingJob(
+    data: CsvProcessingJobData,
+  ): Promise<Job<CsvProcessingJobData>> {
     try {
       const job = await this.csvProcessingQueue.add('process-csv', data, {
         attempts: 3,
@@ -48,7 +50,9 @@ export class QueueService {
         removeOnFail: 5,
       });
 
-      this.logger.log(`CSV processing job added: ${job.id} for upload ${data.uploadId}`);
+      this.logger.log(
+        `CSV processing job added: ${job.id} for upload ${data.uploadId}`,
+      );
       return job;
     } catch (error) {
       this.logger.error(`Failed to add CSV processing job: ${error.message}`);
@@ -61,18 +65,22 @@ export class QueueService {
    */
   async addEmailValidationJob(email: string, contactId: number): Promise<Job> {
     try {
-      const job = await this.emailValidationQueue.add('validate-email', {
-        email,
-        contactId
-      }, {
-        attempts: 2,
-        backoff: {
-          type: 'exponential',
-          delay: 1000,
+      const job = await this.emailValidationQueue.add(
+        'validate-email',
+        {
+          email,
+          contactId,
         },
-        removeOnComplete: 50,
-        removeOnFail: 10,
-      });
+        {
+          attempts: 2,
+          backoff: {
+            type: 'exponential',
+            delay: 1000,
+          },
+          removeOnComplete: 50,
+          removeOnFail: 10,
+        },
+      );
 
       return job;
     } catch (error) {
@@ -87,26 +95,32 @@ export class QueueService {
   async addWebsiteResolutionJob(
     businessName: string,
     email: string,
-    contactId: number
+    contactId: number,
   ): Promise<Job> {
     try {
-      const job = await this.websiteResolutionQueue.add('resolve-website', {
-        businessName,
-        email,
-        contactId
-      }, {
-        attempts: 2,
-        backoff: {
-          type: 'exponential',
-          delay: 2000,
+      const job = await this.websiteResolutionQueue.add(
+        'resolve-website',
+        {
+          businessName,
+          email,
+          contactId,
         },
-        removeOnComplete: 50,
-        removeOnFail: 10,
-      });
+        {
+          attempts: 2,
+          backoff: {
+            type: 'exponential',
+            delay: 2000,
+          },
+          removeOnComplete: 50,
+          removeOnFail: 10,
+        },
+      );
 
       return job;
     } catch (error) {
-      this.logger.error(`Failed to add website resolution job: ${error.message}`);
+      this.logger.error(
+        `Failed to add website resolution job: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -117,7 +131,7 @@ export class QueueService {
   async getJobStatus(jobId: string, queueName: string): Promise<any> {
     try {
       let queue: Queue;
-      
+
       switch (queueName) {
         case 'csv-processing':
           queue = this.csvProcessingQueue;
@@ -148,7 +162,7 @@ export class QueueService {
         finishedOn: job.finishedOn ? new Date(job.finishedOn) : null,
         failedReason: job.failedReason,
         attemptsMade: job.attemptsMade,
-        opts: job.opts
+        opts: job.opts,
       };
     } catch (error) {
       this.logger.error(`Failed to get job status: ${error.message}`);
@@ -164,7 +178,7 @@ export class QueueService {
       const [csvStats, emailStats, websiteStats] = await Promise.all([
         this.csvProcessingQueue.getJobCounts(),
         this.emailValidationQueue.getJobCounts(),
-        this.websiteResolutionQueue.getJobCounts()
+        this.websiteResolutionQueue.getJobCounts(),
       ]);
 
       return {
@@ -174,9 +188,10 @@ export class QueueService {
         totalJobs: {
           waiting: csvStats.waiting + emailStats.waiting + websiteStats.waiting,
           active: csvStats.active + emailStats.active + websiteStats.active,
-          completed: csvStats.completed + emailStats.completed + websiteStats.completed,
-          failed: csvStats.failed + emailStats.failed + websiteStats.failed
-        }
+          completed:
+            csvStats.completed + emailStats.completed + websiteStats.completed,
+          failed: csvStats.failed + emailStats.failed + websiteStats.failed,
+        },
       };
     } catch (error) {
       this.logger.error(`Failed to get queue stats: ${error.message}`);
@@ -192,7 +207,7 @@ export class QueueService {
       await Promise.all([
         this.csvProcessingQueue.clean(0, 'completed'),
         this.emailValidationQueue.clean(0, 'completed'),
-        this.websiteResolutionQueue.clean(0, 'completed')
+        this.websiteResolutionQueue.clean(0, 'completed'),
       ]);
 
       this.logger.log('Completed jobs cleared from all queues');
@@ -210,7 +225,7 @@ export class QueueService {
       await Promise.all([
         this.csvProcessingQueue.clean(0, 'failed'),
         this.emailValidationQueue.clean(0, 'failed'),
-        this.websiteResolutionQueue.clean(0, 'failed')
+        this.websiteResolutionQueue.clean(0, 'failed'),
       ]);
 
       this.logger.log('Failed jobs cleared from all queues');
@@ -228,7 +243,7 @@ export class QueueService {
       await Promise.all([
         this.csvProcessingQueue.pause(),
         this.emailValidationQueue.pause(),
-        this.websiteResolutionQueue.pause()
+        this.websiteResolutionQueue.pause(),
       ]);
 
       this.logger.log('All queues paused');
@@ -246,7 +261,7 @@ export class QueueService {
       await Promise.all([
         this.csvProcessingQueue.resume(),
         this.emailValidationQueue.resume(),
-        this.websiteResolutionQueue.resume()
+        this.websiteResolutionQueue.resume(),
       ]);
 
       this.logger.log('All queues resumed');
@@ -268,13 +283,17 @@ export class QueueService {
           totalRecords: progress.totalRecords,
           successfulRecords: progress.successfulRecords,
           invalidRecords: progress.invalidRecords,
-          duplicateRecords: progress.duplicateRecords
-        }
+          duplicateRecords: progress.duplicateRecords,
+        },
       });
 
-      this.logger.debug(`Progress updated for upload ${progress.uploadId}: ${progress.progress}%`);
+      this.logger.debug(
+        `Progress updated for upload ${progress.uploadId}: ${progress.progress}%`,
+      );
     } catch (error) {
-      this.logger.error(`Failed to update processing progress: ${error.message}`);
+      this.logger.error(
+        `Failed to update processing progress: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -284,7 +303,7 @@ export class QueueService {
    */
   async handleJobFailure(job: Job, error: Error): Promise<void> {
     this.logger.error(`Job ${job.id} failed: ${error.message}`);
-    
+
     // Update database with failure status
     if (job.data.uploadId) {
       try {
@@ -292,11 +311,13 @@ export class QueueService {
           where: { id: job.data.uploadId },
           data: {
             status: 'failure',
-            processedAt: new Date()
-          }
+            processedAt: new Date(),
+          },
         });
       } catch (dbError) {
-        this.logger.error(`Failed to update database on job failure: ${dbError.message}`);
+        this.logger.error(
+          `Failed to update database on job failure: ${dbError.message}`,
+        );
       }
     }
   }
@@ -323,8 +344,12 @@ export class QueueService {
     }> = [];
 
     try {
-      const queueNames = ['csv-processing', 'email-validation', 'website-resolution'];
-      
+      const queueNames = [
+        'csv-processing',
+        'email-validation',
+        'website-resolution',
+      ];
+
       for (const queueName of queueNames) {
         let queue: Queue;
         switch (queueName) {
@@ -343,12 +368,12 @@ export class QueueService {
 
         const stats = await queue.getJobCounts();
         const isPaused = await queue.isPaused();
-        
+
         queues.push({
           name: queueName,
           stats,
           isPaused,
-          isHealthy: !isPaused && stats.failed < 10
+          isHealthy: !isPaused && stats.failed < 10,
         });
 
         if (isPaused) {
@@ -361,7 +386,7 @@ export class QueueService {
       }
 
       let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
-      
+
       if (issues.length > 0) {
         status = issues.length > 2 ? 'unhealthy' : 'degraded';
       }
@@ -372,7 +397,7 @@ export class QueueService {
       return {
         status: 'unhealthy',
         queues: [],
-        issues: [`Failed to check queue health: ${error.message}`]
+        issues: [`Failed to check queue health: ${error.message}`],
       };
     }
   }

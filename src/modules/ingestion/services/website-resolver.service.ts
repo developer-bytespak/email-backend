@@ -18,7 +18,7 @@ export class WebsiteResolverService {
   async resolveWebsite(
     businessName?: string,
     email?: string,
-    website?: string
+    website?: string,
   ): Promise<WebsiteResolutionResult> {
     // Step 1: Direct Website Validation
     if (website) {
@@ -38,7 +38,8 @@ export class WebsiteResolverService {
 
     // Step 3: Business Name Resolution
     if (businessName) {
-      const businessResult = await this.resolveWebsiteFromBusinessName(businessName);
+      const businessResult =
+        await this.resolveWebsiteFromBusinessName(businessName);
       if (businessResult.confidence === 'high') {
         return businessResult;
       }
@@ -47,36 +48,38 @@ export class WebsiteResolverService {
     return {
       source: 'failed',
       confidence: 'low',
-      error: 'Unable to resolve website from any available source'
+      error: 'Unable to resolve website from any available source',
     };
   }
 
   /**
    * Validates if a website is accessible
    */
-  async validateDirectWebsite(website: string): Promise<WebsiteResolutionResult> {
+  async validateDirectWebsite(
+    website: string,
+  ): Promise<WebsiteResolutionResult> {
     try {
       const normalizedUrl = this.normalizeUrl(website);
       const isAccessible = await this.isWebsiteAccessible(normalizedUrl);
-      
+
       if (isAccessible) {
         return {
           website: normalizedUrl,
           source: 'direct',
-          confidence: 'high'
+          confidence: 'high',
         };
       }
 
       return {
         source: 'direct',
         confidence: 'low',
-        error: 'Website is not accessible'
+        error: 'Website is not accessible',
       };
     } catch (error) {
       return {
         source: 'direct',
         confidence: 'low',
-        error: `Website validation failed: ${error.message}`
+        error: `Website validation failed: ${error.message}`,
       };
     }
   }
@@ -87,12 +90,12 @@ export class WebsiteResolverService {
   async inferWebsiteFromEmail(email: string): Promise<WebsiteResolutionResult> {
     try {
       const domain = this.extractDomainFromEmail(email);
-      
+
       if (!domain) {
         return {
           source: 'email_domain',
           confidence: 'low',
-          error: 'Invalid email format'
+          error: 'Invalid email format',
         };
       }
 
@@ -101,31 +104,31 @@ export class WebsiteResolverService {
         return {
           source: 'email_domain',
           confidence: 'low',
-          error: 'Free email domain detected'
+          error: 'Free email domain detected',
         };
       }
 
       const website = `https://${domain}`;
       const isAccessible = await this.isWebsiteAccessible(website);
-      
+
       if (isAccessible) {
         return {
           website,
           source: 'email_domain',
-          confidence: 'high'
+          confidence: 'high',
         };
       }
 
       return {
         source: 'email_domain',
         confidence: 'low',
-        error: 'Email domain is not accessible'
+        error: 'Email domain is not accessible',
       };
     } catch (error) {
       return {
         source: 'email_domain',
         confidence: 'low',
-        error: `Email domain inference failed: ${error.message}`
+        error: `Email domain inference failed: ${error.message}`,
       };
     }
   }
@@ -133,18 +136,21 @@ export class WebsiteResolverService {
   /**
    * Resolves website from business name using Google Search
    */
-  async resolveWebsiteFromBusinessName(businessName: string): Promise<WebsiteResolutionResult> {
+  async resolveWebsiteFromBusinessName(
+    businessName: string,
+  ): Promise<WebsiteResolutionResult> {
     try {
-      const website = await this.googleSearchService.searchBusinessWebsite(businessName);
-      
+      const website =
+        await this.googleSearchService.searchBusinessWebsite(businessName);
+
       if (website) {
         const isAccessible = await this.isWebsiteAccessible(website);
-        
+
         if (isAccessible) {
           return {
             website,
             source: 'google_search',
-            confidence: 'high'
+            confidence: 'high',
           };
         }
       }
@@ -152,13 +158,13 @@ export class WebsiteResolverService {
       return {
         source: 'google_search',
         confidence: 'low',
-        error: 'Business name could not be resolved to website'
+        error: 'Business name could not be resolved to website',
       };
     } catch (error) {
       return {
         source: 'google_search',
         confidence: 'low',
-        error: `Business name resolution failed: ${error.message}`
+        error: `Business name resolution failed: ${error.message}`,
       };
     }
   }
@@ -175,8 +181,8 @@ export class WebsiteResolverService {
         method: 'HEAD',
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)'
-        }
+          'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)',
+        },
       });
 
       clearTimeout(timeoutId);
@@ -191,8 +197,8 @@ export class WebsiteResolverService {
           method: 'GET',
           signal: controller.signal,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)'
-          }
+            'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)',
+          },
         });
 
         clearTimeout(timeoutId);
@@ -208,17 +214,20 @@ export class WebsiteResolverService {
    */
   private normalizeUrl(url: string): string {
     let normalized = url.trim().toLowerCase();
-    
+
     // Add protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    if (
+      !normalized.startsWith('http://') &&
+      !normalized.startsWith('https://')
+    ) {
       normalized = 'https://' + normalized;
     }
-    
+
     // Remove trailing slash
     if (normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1);
     }
-    
+
     return normalized;
   }
 
@@ -236,11 +245,20 @@ export class WebsiteResolverService {
    */
   private isFreeEmailDomain(domain: string): boolean {
     const freeDomains = [
-      'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-      'protonmail.com', 'icloud.com', 'aol.com', 'live.com',
-      'msn.com', 'zoho.com', 'mail.com', 'yandex.com'
+      'gmail.com',
+      'yahoo.com',
+      'hotmail.com',
+      'outlook.com',
+      'protonmail.com',
+      'icloud.com',
+      'aol.com',
+      'live.com',
+      'msn.com',
+      'zoho.com',
+      'mail.com',
+      'yandex.com',
     ];
-    
+
     return freeDomains.includes(domain.toLowerCase());
   }
 }

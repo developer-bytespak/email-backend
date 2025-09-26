@@ -21,7 +21,7 @@ export class CacheService {
   private readonly stats = {
     hits: 0,
     misses: 0,
-    evictions: 0
+    evictions: 0,
   };
 
   /**
@@ -29,7 +29,7 @@ export class CacheService {
    */
   get<T>(key: string): T | null {
     const item = this.cache.get(key);
-    
+
     if (!item) {
       this.stats.misses++;
       return null;
@@ -50,11 +50,12 @@ export class CacheService {
   /**
    * Sets value in cache
    */
-  set<T>(key: string, value: T, ttl: number = 3600000): void { // Default 1 hour
+  set<T>(key: string, value: T, ttl: number = 3600000): void {
+    // Default 1 hour
     const item: CacheItem<T> = {
       value,
       timestamp: Date.now(),
-      ttl
+      ttl,
     };
 
     this.cache.set(key, item);
@@ -66,10 +67,10 @@ export class CacheService {
   async getOrSet<T>(
     key: string,
     factory: () => Promise<T>,
-    ttl: number = 3600000
+    ttl: number = 3600000,
   ): Promise<T> {
     const cached = this.get<T>(key);
-    
+
     if (cached !== null) {
       return cached;
     }
@@ -79,7 +80,9 @@ export class CacheService {
       this.set(key, value, ttl);
       return value;
     } catch (error) {
-      this.logger.error(`Failed to execute factory function for key ${key}: ${error.message}`);
+      this.logger.error(
+        `Failed to execute factory function for key ${key}: ${error.message}`,
+      );
       throw error;
     }
   }
@@ -104,7 +107,7 @@ export class CacheService {
    */
   has(key: string): boolean {
     const item = this.cache.get(key);
-    
+
     if (!item) {
       return false;
     }
@@ -131,7 +134,7 @@ export class CacheService {
       hits: this.stats.hits,
       misses: this.stats.misses,
       hitRate: Math.round(hitRate * 100) / 100,
-      evictions: this.stats.evictions
+      evictions: this.stats.evictions,
     };
   }
 
@@ -174,7 +177,11 @@ export class CacheService {
   /**
    * Caches website validation results
    */
-  async cacheWebsiteValidation(url: string, isValid: boolean, ttl: number = 3600000): Promise<void> {
+  async cacheWebsiteValidation(
+    url: string,
+    isValid: boolean,
+    ttl: number = 3600000,
+  ): Promise<void> {
     const key = `website:${url}`;
     this.set(key, { isValid, timestamp: Date.now() }, ttl);
   }
@@ -182,7 +189,9 @@ export class CacheService {
   /**
    * Gets cached website validation result
    */
-  getCachedWebsiteValidation(url: string): { isValid: boolean; timestamp: number } | null {
+  getCachedWebsiteValidation(
+    url: string,
+  ): { isValid: boolean; timestamp: number } | null {
     const key = `website:${url}`;
     return this.get(key);
   }
@@ -190,7 +199,12 @@ export class CacheService {
   /**
    * Caches email validation results
    */
-  async cacheEmailValidation(email: string, result: any, ttl: number = 86400000): Promise<void> { // 24 hours
+  async cacheEmailValidation(
+    email: string,
+    result: any,
+    ttl: number = 86400000,
+  ): Promise<void> {
+    // 24 hours
     const key = `email:${email}`;
     this.set(key, result, ttl);
   }
@@ -206,7 +220,12 @@ export class CacheService {
   /**
    * Caches Google Search results
    */
-  async cacheGoogleSearchResult(query: string, result: any, ttl: number = 86400000): Promise<void> { // 24 hours
+  async cacheGoogleSearchResult(
+    query: string,
+    result: any,
+    ttl: number = 86400000,
+  ): Promise<void> {
+    // 24 hours
     const key = `google:${query}`;
     this.set(key, result, ttl);
   }
@@ -222,7 +241,12 @@ export class CacheService {
   /**
    * Caches DNS validation results
    */
-  async cacheDnsValidation(domain: string, result: any, ttl: number = 86400000): Promise<void> { // 24 hours
+  async cacheDnsValidation(
+    domain: string,
+    result: any,
+    ttl: number = 86400000,
+  ): Promise<void> {
+    // 24 hours
     const key = `dns:${domain}`;
     this.set(key, result, ttl);
   }
@@ -238,7 +262,12 @@ export class CacheService {
   /**
    * Caches duplicate detection results
    */
-  async cacheDuplicateDetection(hash: string, result: any, ttl: number = 3600000): Promise<void> { // 1 hour
+  async cacheDuplicateDetection(
+    hash: string,
+    result: any,
+    ttl: number = 3600000,
+  ): Promise<void> {
+    // 1 hour
     const key = `duplicate:${hash}`;
     this.set(key, result, ttl);
   }
@@ -254,11 +283,14 @@ export class CacheService {
   /**
    * Sets up automatic cache cleanup
    */
-  startCleanupInterval(intervalMs: number = 300000): void { // Default 5 minutes
+  startCleanupInterval(intervalMs: number = 300000): void {
+    // Default 5 minutes
     setInterval(() => {
       const cleaned = this.cleanExpired();
       if (cleaned > 0) {
-        this.logger.debug(`Automatic cleanup: removed ${cleaned} expired entries`);
+        this.logger.debug(
+          `Automatic cleanup: removed ${cleaned} expired entries`,
+        );
       }
     }, intervalMs);
 
@@ -270,7 +302,7 @@ export class CacheService {
    */
   getMemoryUsage(): { estimatedSize: number; entryCount: number } {
     let estimatedSize = 0;
-    
+
     for (const [key, item] of this.cache.entries()) {
       estimatedSize += key.length * 2; // Approximate string size
       estimatedSize += JSON.stringify(item).length * 2; // Approximate object size
@@ -278,7 +310,7 @@ export class CacheService {
 
     return {
       estimatedSize,
-      entryCount: this.cache.size
+      entryCount: this.cache.size,
     };
   }
 

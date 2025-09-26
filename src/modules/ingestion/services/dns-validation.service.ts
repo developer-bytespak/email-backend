@@ -28,18 +28,32 @@ export class DnsValidationService {
   private readonly cacheTimeout = 24 * 60 * 60 * 1000; // 24 hours
 
   private readonly freeEmailDomains = [
-    'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-    'protonmail.com', 'icloud.com', 'aol.com', 'live.com',
-    'msn.com', 'zoho.com', 'mail.com', 'yandex.com',
-    'gmx.com', 'web.de', 'tutanota.com', 'fastmail.com'
+    'gmail.com',
+    'yahoo.com',
+    'hotmail.com',
+    'outlook.com',
+    'protonmail.com',
+    'icloud.com',
+    'aol.com',
+    'live.com',
+    'msn.com',
+    'zoho.com',
+    'mail.com',
+    'yandex.com',
+    'gmx.com',
+    'web.de',
+    'tutanota.com',
+    'fastmail.com',
   ];
 
   /**
    * Validates email domain using DNS MX and A records
    */
-  async validateEmailDomain(email: string): Promise<EmailDomainValidationResult> {
+  async validateEmailDomain(
+    email: string,
+  ): Promise<EmailDomainValidationResult> {
     const domain = this.extractDomainFromEmail(email);
-    
+
     if (!domain) {
       return {
         domain: '',
@@ -48,7 +62,7 @@ export class DnsValidationService {
         hasARecord: false,
         isFreeEmail: false,
         credibilityScore: 0,
-        error: 'Invalid email format'
+        error: 'Invalid email format',
       };
     }
 
@@ -63,7 +77,7 @@ export class DnsValidationService {
       hasARecord: dnsResult.hasARecord,
       isFreeEmail,
       credibilityScore,
-      error: dnsResult.error
+      error: dnsResult.error,
     };
   }
 
@@ -80,13 +94,13 @@ export class DnsValidationService {
     try {
       const [mxRecords, aRecords] = await Promise.allSettled([
         this.getMxRecords(domain),
-        this.getARecords(domain)
+        this.getARecords(domain),
       ]);
 
       const result: DnsValidationResult = {
         isValid: false,
         hasMxRecord: false,
-        hasARecord: false
+        hasARecord: false,
       };
 
       // Process MX records
@@ -113,10 +127,12 @@ export class DnsValidationService {
         isValid: false,
         hasMxRecord: false,
         hasARecord: false,
-        error: `DNS validation failed: ${error.message}`
+        error: `DNS validation failed: ${error.message}`,
       };
 
-      this.logger.error(`DNS validation failed for domain ${domain}: ${error.message}`);
+      this.logger.error(
+        `DNS validation failed for domain ${domain}: ${error.message}`,
+      );
       return result;
     }
   }
@@ -127,7 +143,7 @@ export class DnsValidationService {
   private async getMxRecords(domain: string): Promise<string[]> {
     try {
       const mxRecords = await dns.resolveMx(domain);
-      return mxRecords.map(record => record.exchange);
+      return mxRecords.map((record) => record.exchange);
     } catch (error) {
       this.logger.debug(`No MX records found for domain ${domain}`);
       return [];
@@ -150,17 +166,23 @@ export class DnsValidationService {
   /**
    * Validates multiple email domains in batch
    */
-  async validateEmailDomainsBatch(emails: string[]): Promise<EmailDomainValidationResult[]> {
-    const domains = emails.map(email => this.extractDomainFromEmail(email));
-    const uniqueDomains = [...new Set(domains.filter(domain => domain))];
+  async validateEmailDomainsBatch(
+    emails: string[],
+  ): Promise<EmailDomainValidationResult[]> {
+    const domains = emails.map((email) => this.extractDomainFromEmail(email));
+    const uniqueDomains = [...new Set(domains.filter((domain) => domain))];
 
     const domainResults = await Promise.allSettled(
-      uniqueDomains.map(domain => domain ? this.validateDomainDns(domain) : Promise.resolve({
-        isValid: false,
-        hasMxRecord: false,
-        hasARecord: false,
-        error: 'Invalid domain'
-      }))
+      uniqueDomains.map((domain) =>
+        domain
+          ? this.validateDomainDns(domain)
+          : Promise.resolve({
+              isValid: false,
+              hasMxRecord: false,
+              hasARecord: false,
+              error: 'Invalid domain',
+            }),
+      ),
     );
 
     const domainMap = new Map<string, DnsValidationResult>();
@@ -174,12 +196,12 @@ export class DnsValidationService {
           isValid: false,
           hasMxRecord: false,
           hasARecord: false,
-          error: `Validation failed: ${result.reason}`
+          error: `Validation failed: ${result.reason}`,
         });
       }
     });
 
-    return emails.map(email => {
+    return emails.map((email) => {
       const domain = this.extractDomainFromEmail(email);
       if (!domain) {
         return {
@@ -189,7 +211,7 @@ export class DnsValidationService {
           hasARecord: false,
           isFreeEmail: false,
           credibilityScore: 0,
-          error: 'Invalid email format'
+          error: 'Invalid email format',
         };
       }
 
@@ -197,7 +219,7 @@ export class DnsValidationService {
         isValid: false,
         hasMxRecord: false,
         hasARecord: false,
-        error: 'Domain not found'
+        error: 'Domain not found',
       };
 
       return {
@@ -207,7 +229,7 @@ export class DnsValidationService {
         hasARecord: dnsResult.hasARecord,
         isFreeEmail: this.isFreeEmailDomain(domain),
         credibilityScore: this.calculateDomainCredibility(domain, dnsResult),
-        error: dnsResult.error
+        error: dnsResult.error,
       };
     });
   }
@@ -231,7 +253,10 @@ export class DnsValidationService {
   /**
    * Calculates domain credibility score
    */
-  private calculateDomainCredibility(domain: string, dnsResult: DnsValidationResult): number {
+  private calculateDomainCredibility(
+    domain: string,
+    dnsResult: DnsValidationResult,
+  ): number {
     let score = 0;
 
     // Base score for valid domain
@@ -279,7 +304,11 @@ export class DnsValidationService {
    */
   private getCachedResult(domain: string): DnsValidationResult | null {
     const cached = this.cache.get(domain);
-    if (cached && cached.timestamp && Date.now() - cached.timestamp < this.cacheTimeout) {
+    if (
+      cached &&
+      cached.timestamp &&
+      Date.now() - cached.timestamp < this.cacheTimeout
+    ) {
       return cached;
     }
     return null;
@@ -291,7 +320,7 @@ export class DnsValidationService {
   private setCachedResult(domain: string, result: DnsValidationResult): void {
     const cached = {
       ...result,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
     this.cache.set(domain, cached);
   }
@@ -310,7 +339,7 @@ export class DnsValidationService {
   getCacheStats(): { size: number; domains: string[] } {
     return {
       size: this.cache.size,
-      domains: Array.from(this.cache.keys())
+      domains: Array.from(this.cache.keys()),
     };
   }
 
@@ -318,7 +347,8 @@ export class DnsValidationService {
    * Validates domain format
    */
   validateDomainFormat(domain: string): boolean {
-    const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
+    const domainRegex =
+      /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
     return domainRegex.test(domain);
   }
 
@@ -339,6 +369,6 @@ export class DnsValidationService {
 
     // Check for common business TLDs
     const businessTlds = ['.com', '.org', '.net', '.co', '.biz', '.info'];
-    return businessTlds.some(tld => domain.toLowerCase().endsWith(tld));
+    return businessTlds.some((tld) => domain.toLowerCase().endsWith(tld));
   }
 }

@@ -22,7 +22,12 @@ export class PlansService {
         name: 'Professional Plan',
         price: 49.99,
         billingCycle: 'monthly',
-        features: ['5000 emails/month', 'Advanced templates', 'Priority support', 'Analytics'],
+        features: [
+          '5000 emails/month',
+          'Advanced templates',
+          'Priority support',
+          'Analytics',
+        ],
         limits: {
           emails: 5000,
           campaigns: 25,
@@ -34,7 +39,13 @@ export class PlansService {
         name: 'Enterprise Plan',
         price: 149.99,
         billingCycle: 'monthly',
-        features: ['Unlimited emails', 'Custom templates', '24/7 support', 'Advanced analytics', 'API access'],
+        features: [
+          'Unlimited emails',
+          'Custom templates',
+          '24/7 support',
+          'Advanced analytics',
+          'API access',
+        ],
         limits: {
           emails: -1, // unlimited
           campaigns: -1,

@@ -22,7 +22,11 @@ export class WebhooksService {
     };
   }
 
-  async validateWebhookSignature(signature: string, payload: string, secret: string) {
+  async validateWebhookSignature(
+    signature: string,
+    payload: string,
+    secret: string,
+  ) {
     // TODO: Implement webhook signature validation
     return {
       valid: true,

@@ -11,7 +11,10 @@ export class NormalizationUtil {
       .trim()
       .replace(/\s+/g, ' ') // Replace multiple spaces with single space
       .replace(/[^\w\s\-&.,'()]/g, '') // Remove special characters except common business name chars
-      .replace(/\b(LLC|Inc|Corp|Ltd|Co|Company|Business|Corporation|Limited)\b/gi, '') // Remove common suffixes
+      .replace(
+        /\b(LLC|Inc|Corp|Ltd|Co|Company|Business|Corporation|Limited)\b/gi,
+        '',
+      ) // Remove common suffixes
       .trim();
   }
 
@@ -36,7 +39,7 @@ export class NormalizationUtil {
 
     // Remove all non-digit characters except + at the beginning
     let normalized = phone.replace(/[^\d+]/g, '');
-    
+
     // Remove leading + if it's not followed by country code
     if (normalized.startsWith('+') && normalized.length < 10) {
       normalized = normalized.substring(1);
@@ -54,20 +57,23 @@ export class NormalizationUtil {
     }
 
     let normalized = website.trim().toLowerCase();
-    
+
     // Add protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+    if (
+      !normalized.startsWith('http://') &&
+      !normalized.startsWith('https://')
+    ) {
       normalized = 'https://' + normalized;
     }
-    
+
     // Remove www. prefix for consistency
     normalized = normalized.replace(/^https?:\/\/www\./, 'https://');
-    
+
     // Remove trailing slash
     if (normalized.endsWith('/')) {
       normalized = normalized.slice(0, -1);
     }
-    
+
     return normalized;
   }
 
@@ -125,16 +131,30 @@ export class NormalizationUtil {
    */
   static normalizeBusinessNameForDuplicates(name: string): string {
     const normalized = this.normalizeForDuplicateDetection(name);
-    
+
     // Remove common business suffixes and words
     const suffixesToRemove = [
-      'llc', 'inc', 'corp', 'ltd', 'co', 'company', 'business',
-      'corporation', 'limited', 'enterprises', 'group', 'associates',
-      'partners', 'consulting', 'services', 'solutions', 'systems'
+      'llc',
+      'inc',
+      'corp',
+      'ltd',
+      'co',
+      'company',
+      'business',
+      'corporation',
+      'limited',
+      'enterprises',
+      'group',
+      'associates',
+      'partners',
+      'consulting',
+      'services',
+      'solutions',
+      'systems',
     ];
 
     let result = normalized;
-    suffixesToRemove.forEach(suffix => {
+    suffixesToRemove.forEach((suffix) => {
       const regex = new RegExp(`\\b${suffix}\\b`, 'gi');
       result = result.replace(regex, '');
     });
@@ -147,12 +167,12 @@ export class NormalizationUtil {
    */
   static normalizePhoneForDuplicates(phone: string): string {
     const normalized = this.normalizePhone(phone);
-    
+
     // Remove country code if it's US/Canada (+1)
     if (normalized.startsWith('1') && normalized.length === 11) {
       return normalized.substring(1);
     }
-    
+
     return normalized;
   }
 
@@ -161,7 +181,7 @@ export class NormalizationUtil {
    */
   static normalizeWebsiteForDuplicates(website: string): string {
     const normalized = this.normalizeWebsite(website);
-    
+
     try {
       const url = new URL(normalized);
       return url.hostname.toLowerCase();
@@ -180,15 +200,19 @@ export class NormalizationUtil {
     phone?: string;
   }): string {
     const normalizedData = {
-      businessName: data.businessName ? this.normalizeBusinessNameForDuplicates(data.businessName) : '',
+      businessName: data.businessName
+        ? this.normalizeBusinessNameForDuplicates(data.businessName)
+        : '',
       email: data.email ? this.normalizeEmail(data.email) : '',
-      website: data.website ? this.normalizeWebsiteForDuplicates(data.website) : '',
-      phone: data.phone ? this.normalizePhoneForDuplicates(data.phone) : ''
+      website: data.website
+        ? this.normalizeWebsiteForDuplicates(data.website)
+        : '',
+      phone: data.phone ? this.normalizePhoneForDuplicates(data.phone) : '',
     };
 
     // Create a deterministic hash from normalized data
     const hashString = Object.values(normalizedData)
-      .filter(value => value.length > 0)
+      .filter((value) => value.length > 0)
       .sort()
       .join('|');
 
@@ -202,7 +226,7 @@ export class NormalizationUtil {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
       const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
+      hash = (hash << 5) - hash + char;
       hash = hash & hash; // Convert to 32-bit integer
     }
     return Math.abs(hash).toString(36);
@@ -237,7 +261,7 @@ export class NormalizationUtil {
 
     return {
       isValid: errors.length === 0,
-      errors
+      errors,
     };
   }
 

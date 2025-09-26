@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { Contact } from '@prisma/client';
-import { ProcessingStrategy, ValidationResult } from './processing-strategy.interface';
+import {
+  ProcessingStrategy,
+  ValidationResult,
+} from './processing-strategy.interface';
 import { GoogleSearchService } from '../services/google-search.service';
 
 @Injectable()
@@ -21,9 +24,10 @@ export class PersonalStrategy implements ProcessingStrategy {
 
   async validateContact(contact: Contact): Promise<ValidationResult> {
     // Personal plan: Comprehensive validation
-    
+
     // Check mandatory fields
-    const hasRequiredField = contact.businessName || contact.email || contact.website;
+    const hasRequiredField =
+      contact.businessName || contact.email || contact.website;
     if (!hasRequiredField) {
       return {
         isValid: false,
@@ -55,7 +59,9 @@ export class PersonalStrategy implements ProcessingStrategy {
 
     // Validate business name if present
     if (contact.businessName) {
-      const businessNameValidation = this.validateBusinessName(contact.businessName);
+      const businessNameValidation = this.validateBusinessName(
+        contact.businessName,
+      );
       if (!businessNameValidation.isValid) {
         return {
           isValid: false,
@@ -71,7 +77,7 @@ export class PersonalStrategy implements ProcessingStrategy {
 
   async resolveWebsite(contact: Contact): Promise<string | null> {
     // Personal plan: Full website resolution pipeline
-    
+
     // Step 1: Direct website validation
     if (contact.website) {
       const isValid = await this.isWebsiteAccessible(contact.website);
@@ -90,7 +96,9 @@ export class PersonalStrategy implements ProcessingStrategy {
 
     // Step 3: Business name resolution (Google Search API)
     if (contact.businessName) {
-      const resolvedWebsite = await this.resolveWebsiteFromBusinessName(contact.businessName);
+      const resolvedWebsite = await this.resolveWebsiteFromBusinessName(
+        contact.businessName,
+      );
       if (resolvedWebsite) {
         return resolvedWebsite;
       }
@@ -161,7 +169,7 @@ export class PersonalStrategy implements ProcessingStrategy {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-      
+
       const response = await fetch(url, {
         method: 'HEAD',
         signal: controller.signal,
@@ -169,13 +177,16 @@ export class PersonalStrategy implements ProcessingStrategy {
           'User-Agent': 'Mozilla/5.0 (compatible; EmailSystemBot/1.0)',
         },
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       // Consider 2xx and 3xx status codes as accessible
       return response.status >= 200 && response.status < 400;
     } catch (error) {
-      console.warn(`Website accessibility check failed for ${url}:`, error.message);
+      console.warn(
+        `Website accessibility check failed for ${url}:`,
+        error.message,
+      );
       return false;
     }
   }
@@ -186,8 +197,14 @@ export class PersonalStrategy implements ProcessingStrategy {
 
     // Skip free email domains
     const freeEmailDomains = [
-      'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com',
-      'protonmail.com', 'icloud.com', 'aol.com', 'live.com'
+      'gmail.com',
+      'yahoo.com',
+      'hotmail.com',
+      'outlook.com',
+      'protonmail.com',
+      'icloud.com',
+      'aol.com',
+      'live.com',
     ];
 
     if (freeEmailDomains.includes(domain)) {
@@ -196,14 +213,17 @@ export class PersonalStrategy implements ProcessingStrategy {
 
     const website = `https://${domain}`;
     const isAccessible = await this.isWebsiteAccessible(website);
-    
+
     return isAccessible ? website : null;
   }
 
-  private async resolveWebsiteFromBusinessName(businessName: string): Promise<string | null> {
+  private async resolveWebsiteFromBusinessName(
+    businessName: string,
+  ): Promise<string | null> {
     try {
-      const website = await this.googleSearchService.searchBusinessWebsite(businessName);
-      
+      const website =
+        await this.googleSearchService.searchBusinessWebsite(businessName);
+
       if (website) {
         // Validate that the website is accessible
         const isAccessible = await this.isWebsiteAccessible(website);
@@ -211,7 +231,7 @@ export class PersonalStrategy implements ProcessingStrategy {
           return website;
         }
       }
-      
+
       return null;
     } catch (error) {
       console.error('Website resolution error:', error);
