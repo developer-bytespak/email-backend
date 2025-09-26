@@ -17,8 +17,10 @@ model Client {
   country      String
   address      String
   hashPassword String
+  pricePlanId  Int
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @default(now()) @updatedAt
+  pricePlan    PricePlan        @relation(fields: [pricePlanId], references: [id])
   csvUploads   CsvUpload[]
   contacts     Contact[]
   emailDrafts  EmailDraft[]
@@ -29,6 +31,18 @@ model Client {
   smsLogs      SmsLog[]
 }
 
+model PricePlan {
+  id           Int       @id @default(autoincrement())
+  name         String    @unique
+  displayName  String
+  description  String?
+  features     Json?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @default(now()) @updatedAt
+  clients      Client[]
+}
+
 model CsvUpload {
   id                Int             @id @default(autoincrement())
   clientId          Int
@@ -36,13 +50,19 @@ model CsvUpload {
   status            CsvUploadStatus
   totalRecords      Int
   successfulRecords Int
+  invalidRecords    Int
+  duplicateRecords  Int
+  columnMapping     Json?
   description       String?
   createdAt         DateTime        @default(now())
+  processedAt       DateTime?
   client            Client          @relation(fields: [clientId], references: [id])
   contacts          Contact[]
 }
 
 enum CsvUploadStatus {
+  pending
+  processing
   success
   failure
 }
@@ -61,6 +81,7 @@ model Contact {
   status           ContactStatus @default(new)
   valid            Boolean       @default(false)
   validationReason String?
+  duplicateStatus  DuplicateStatus @default(unique)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @default(now()) @updatedAt
   csvUpload        CsvUpload     @relation(fields: [csvUploadId], references: [id])
@@ -78,6 +99,12 @@ enum ContactStatus {
   scraped
   summarized
   emailed
+}
+
+enum DuplicateStatus {
+  unique
+  potential_duplicate
+  confirmed_duplicate
 }
 
 model Summary {

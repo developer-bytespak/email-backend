@@ -1,0 +1,461 @@
+================================================================================
+                    CSV INGESTION & VALIDATION MODULE
+                           COMPLETE DOCUMENTATION
+================================================================================
+
+OVERVIEW
+--------
+This module implements a comprehensive CSV ingestion system for the email marketing
+platform. It processes lead data with different validation strategies based on
+client subscription plans (Promotional vs Personal).
+
+================================================================================
+                                PHASE 1: DATABASE SCHEMA UPDATES
+================================================================================
+
+PRISMA SCHEMA CHANGES MADE:
+---------------------------
+
+1. PRICE PLAN MODEL (NEW):
+   - Purpose: Define subscription tiers that determine processing strategy
+   - Fields:
+     * id: Primary key
+     * name: 'promotional' or 'personal' (unique)
+     * displayName: Human-readable name
+     * description: Optional plan description
+     * features: JSON field storing plan capabilities
+     * isActive: Enable/disable plans
+     * createdAt/updatedAt: Timestamps
+     * clients: One-to-many relationship
+
+2. CLIENT MODEL UPDATES:
+   - Added: pricePlanId (foreign key to PricePlan)
+   - Added: pricePlan relation
+   - Purpose: Link clients to their subscription plan
+
+3. CSV UPLOAD MODEL ENHANCEMENTS:
+   - Added: invalidRecords (count of invalid records)
+   - Added: duplicateRecords (count of duplicate records)
+   - Added: columnMapping (JSON field for column mapping config)
+   - Added: processedAt (timestamp when processing completed)
+   - Updated: CsvUploadStatus enum with 'pending' and 'processing' states
+
+4. CONTACT MODEL ENHANCEMENTS:
+   - Added: duplicateStatus (enum: unique, potential_duplicate, confirmed_duplicate)
+   - Purpose: Track duplicate detection results
+   - Note: website column will be updated directly with inferred websites
+
+5. NEW ENUMS:
+   - DuplicateStatus: For tracking duplicate records
+   - Updated CsvUploadStatus: Added pending and processing states
+
+DEFAULT PRICE PLANS TO SEED:
+----------------------------
+1. PROMOTIONAL PLAN (SMALL CLIENT):
+   - Features: Email validation only
+   - websiteResolution: false
+   - googleSearchAPI: false
+   - emailValidation: true
+   - businessNameResolution: false
+
+2. PERSONAL PLAN (BIG CLIENT):
+   - Features: Full website resolution pipeline
+   - websiteResolution: true
+   - googleSearchAPI: true
+   - emailValidation: true
+   - businessNameResolution: true
+
+================================================================================
+                                PHASE 2: API ENDPOINTS
+================================================================================
+
+REQUIRED ENDPOINTS:
+------------------
+
+1. CSV UPLOAD ENDPOINT:
+   POST /api/ingestion/upload-csv
+   - Accepts multipart/form-data with CSV file
+   - Creates CsvUpload record with status 'pending'
+   - Returns upload ID and file information
+   - Validates file format and size
+
+2. COLUMN MAPPING ENDPOINT:
+   POST /api/ingestion/:uploadId/map-columns
+   - Accepts column mapping configuration
+   - Validates required field mappings
+   - Stores mapping in CsvUpload.columnMapping
+   - Updates status to 'processing'
+
+3. PROCESS CSV ENDPOINT:
+   POST /api/ingestion/:uploadId/process
+   - Starts background processing
+   - Determines client plan and processing strategy
+   - Processes each row according to plan features
+   - Updates final counts and status
+
+4. PROCESSING STATUS ENDPOINT:
+   GET /api/ingestion/:uploadId/status
+   - Returns current processing status
+   - Shows progress and record counts
+   - Real-time updates during processing
+
+5. PROCESSING RESULTS ENDPOINT:
+   GET /api/ingestion/:uploadId/results
+   - Returns detailed results summary
+   - Shows valid/invalid/duplicate breakdown
+   - Provides error details and recommendations
+
+================================================================================
+                                PHASE 3: CORE PROCESSING LOGIC
+================================================================================
+
+PROCESSING STRATEGIES:
+---------------------
+
+1. PROMOTIONAL PLAN (SMALL CLIENT) PROCESSING:
+   - Email validation only
+   - Check email format and domain validity
+   - Skip website resolution entirely
+   - Basic duplicate detection
+   - Faster processing, lower cost
+
+2. PERSONAL PLAN (BIG CLIENT) PROCESSING:
+   - Full website resolution pipeline
+   - Email domain inference
+   - Google Search API for business name resolution
+   - Advanced duplicate detection
+   - Comprehensive validation
+
+WEBSITE RESOLUTION PIPELINE (PERSONAL PLAN ONLY):
+--------------------------------------------------
+Step 1: Direct Website Validation
+- If website provided → validate accessibility
+- Return website if valid
+
+Step 2: Email Domain Inference
+- If email with custom domain → extract domain
+- Validate domain exists and is accessible
+- Create website URL from domain
+
+Step 3: Business Name Resolution
+- Use Google Search API to find business website
+- Return first valid website result
+- Handle API rate limits and errors
+
+VALIDATION RULES:
+----------------
+1. MANDATORY FIELDS CHECK:
+   - At least one of: business_name, email, website
+   - Required for processing to continue
+
+2. EMAIL VALIDATION:
+   - Valid email format
+   - Not from free domains (gmail, yahoo, etc.)
+   - Domain must be accessible (Personal plan only)
+
+3. WEBSITE VALIDATION (Personal plan only):
+   - Valid URL format
+   - Website must be accessible
+   - HTTP response validation
+
+4. BUSINESS NAME VALIDATION:
+   - Minimum length requirements
+   - Must resolve to website (Personal plan only)
+
+DUPLICATE DETECTION LOGIC:
+-------------------------
+1. CONFIRMED DUPLICATES:
+   - Same normalized website URL
+   - Same normalized email address
+   - Exact matches across all clients
+
+2. POTENTIAL DUPLICATES:
+   - Same business name with different contact info
+   - Same phone number with different details
+   - Similar patterns requiring manual review
+
+3. UNIQUE RECORDS:
+   - No matches found
+   - Safe to proceed with processing
+
+================================================================================
+                                PHASE 4: FILE STRUCTURE
+================================================================================
+
+RECOMMENDED FILE ORGANIZATION:
+-----------------------------
+src/modules/ingestion/
+├── ingestion.controller.ts          // Main controller with all endpoints
+├── ingestion.service.ts             // Main service orchestrating processing
+├── ingestion.module.ts              // Module configuration
+├── dto/
+│   ├── upload-csv.dto.ts           // CSV upload validation
+│   ├── column-mapping.dto.ts       // Column mapping validation
+│   ├── processing-result.dto.ts    // Processing results
+│   └── processing-status.dto.ts    // Status updates
+├── strategies/
+│   ├── processing-strategy.interface.ts // Strategy interface
+│   ├── promotional.strategy.ts     // Promotional plan processing
+│   ├── personal.strategy.ts        // Personal plan processing
+│   └── strategy-factory.ts         // Strategy factory
+├── services/
+│   ├── csv-parser.service.ts       // CSV parsing and validation
+│   ├── column-mapper.service.ts    // Column mapping logic
+│   ├── website-resolver.service.ts // Website resolution pipeline
+│   ├── duplicate-detector.service.ts // Duplicate detection
+│   ├── email-validator.service.ts  // Email validation
+│   └── business-name-resolver.service.ts // Business name resolution
+├── utils/
+│   ├── csv-validator.util.ts       // CSV format validation
+│   ├── url-validator.util.ts       // URL validation utilities
+│   ├── domain-extractor.util.ts    // Domain extraction from email
+│   └── normalization.util.ts       // Data normalization
+└── config/
+    ├── processing-config.service.ts // Processing configuration
+    └── feature-flags.service.ts     // Feature flag management
+
+================================================================================
+                                PHASE 5: EXTERNAL INTEGRATIONS
+================================================================================
+
+REQUIRED EXTERNAL SERVICES:
+--------------------------
+
+1. GOOGLE CUSTOM SEARCH API:
+   - Purpose: Resolve business names to websites
+   - Rate limits: 100 queries/day (free tier)
+   - Implementation: REST API calls
+   - Fallback: Manual review for failed resolutions
+
+2. WEBSITE VALIDATION SERVICE:
+   - Purpose: Check if websites are accessible
+   - Implementation: HTTP HEAD/GET requests
+   - Timeout: 10 seconds per request
+   - Retry logic: 3 attempts with exponential backoff
+
+3. EMAIL DOMAIN VALIDATION:
+   - Purpose: Validate email domains exist
+   - Implementation: DNS MX record lookup
+   - Caching: Cache results for 24 hours
+   - Free email domain detection
+
+4. QUEUE SYSTEM (Redis/Bull):
+   - Purpose: Background processing
+   - Implementation: Job queues for CSV processing
+   - Monitoring: Progress tracking and error handling
+   - Scaling: Multiple worker processes
+
+================================================================================
+                                PHASE 6: ERROR HANDLING & USER FEEDBACK
+================================================================================
+
+ERROR CATEGORIES:
+----------------
+1. FILE ERRORS:
+   - Invalid CSV format
+   - Missing headers
+   - File size limits exceeded
+   - Corrupted file data
+
+2. MAPPING ERRORS:
+   - Missing required field mappings
+   - Invalid column selections
+   - Duplicate column mappings
+
+3. VALIDATION ERRORS:
+   - Invalid data in CSV rows
+   - Missing required identifiers
+   - Unresolvable websites/domains
+
+4. PROCESSING ERRORS:
+   - External API failures
+   - Database connection issues
+   - Queue processing failures
+
+USER FEEDBACK SYSTEM:
+--------------------
+1. REAL-TIME STATUS UPDATES:
+   - Processing progress percentage
+   - Current step being executed
+   - Estimated time remaining
+
+2. DETAILED ERROR REPORTING:
+   - Row-by-row error details
+   - Suggested fixes for common issues
+   - Retry mechanisms for failed operations
+
+3. SUMMARY REPORTS:
+   - Total records processed
+   - Success/failure breakdown
+   - Duplicate detection results
+   - Processing time and performance metrics
+
+================================================================================
+                                PHASE 7: TESTING STRATEGY
+================================================================================
+
+UNIT TESTS:
+----------
+1. CSV Parser Service:
+   - Valid CSV file parsing
+   - Invalid format handling
+   - Large file processing
+   - Encoding issues
+
+2. Column Mapping Service:
+   - Required field validation
+   - Optional field handling
+   - Invalid mapping detection
+
+3. Website Resolution Service:
+   - Direct website validation
+   - Email domain inference
+   - Google Search API integration
+   - Error handling and fallbacks
+
+4. Duplicate Detection Service:
+   - Exact match detection
+   - Potential duplicate identification
+   - Performance with large datasets
+
+INTEGRATION TESTS:
+-----------------
+1. End-to-End CSV Upload Flow:
+   - Complete processing pipeline
+   - Database operations
+   - External API calls
+   - Error scenarios
+
+2. Strategy Pattern Testing:
+   - Promotional vs Personal processing
+   - Feature flag validation
+   - Plan-based routing
+
+TEST DATA REQUIREMENTS:
+----------------------
+1. SAMPLE CSV FILES:
+   - Valid format with all fields
+   - Missing required fields
+   - Duplicate records
+   - Invalid email formats
+   - Unresolvable websites
+
+2. MOCK EXTERNAL SERVICES:
+   - Google Search API responses
+   - Website validation responses
+   - DNS lookup results
+
+================================================================================
+                                PHASE 8: DEPLOYMENT & MONITORING
+================================================================================
+
+DEPLOYMENT CONSIDERATIONS:
+-------------------------
+1. ENVIRONMENT CONFIGURATION:
+   - Database connection strings
+   - External API keys
+   - Queue system configuration
+   - File storage settings
+
+2. PERFORMANCE OPTIMIZATION:
+   - Database indexing strategy
+   - Caching mechanisms
+   - Rate limiting for external APIs
+   - Background job processing
+
+3. SCALABILITY:
+   - Horizontal scaling for processing
+   - Database connection pooling
+   - Queue worker scaling
+   - File storage optimization
+
+MONITORING & LOGGING:
+--------------------
+1. PROCESSING METRICS:
+   - Processing time per file
+   - Success/failure rates
+   - External API usage
+   - Queue performance
+
+2. ERROR TRACKING:
+   - Failed processing attempts
+   - External service failures
+   - Data validation issues
+   - System performance bottlenecks
+
+3. BUSINESS METRICS:
+   - Records processed per plan type
+   - Feature usage statistics
+   - Client satisfaction metrics
+   - Cost analysis per processing type
+
+================================================================================
+                                IMPLEMENTATION TIMELINE
+================================================================================
+
+WEEK 1: Foundation
+- Database schema implementation
+- Basic CSV upload endpoint
+- Column mapping functionality
+
+WEEK 2: Core Processing
+- Strategy pattern implementation
+- Email validation service
+- Basic duplicate detection
+
+WEEK 3: Advanced Features
+- Website resolution pipeline
+- Google Search API integration
+- Enhanced duplicate detection
+
+WEEK 4: Testing & Optimization
+- Comprehensive testing
+- Performance optimization
+- Error handling improvements
+
+WEEK 5: Integration & Deployment
+- Queue system integration
+- Monitoring implementation
+- Production deployment
+
+================================================================================
+                                SUCCESS CRITERIA
+================================================================================
+
+FUNCTIONAL REQUIREMENTS:
+-----------------------
+✓ CSV files uploaded and parsed successfully
+✓ Column mapping interface working
+✓ Processing strategies implemented correctly
+✓ Website resolution pipeline functional
+✓ Duplicate detection accurate
+✓ Error handling comprehensive
+
+PERFORMANCE REQUIREMENTS:
+------------------------
+✓ Process 1000 records in under 5 minutes
+✓ Handle files up to 10MB
+✓ 99% uptime for processing pipeline
+✓ External API rate limit compliance
+
+BUSINESS REQUIREMENTS:
+---------------------
+✓ Clear distinction between plan features
+✓ Cost-effective processing for promotional clients
+✓ Comprehensive validation for personal clients
+✓ User-friendly error reporting and feedback
+
+================================================================================
+                                CONCLUSION
+================================================================================
+
+This CSV ingestion module provides a robust, scalable solution for processing
+lead data with different validation strategies based on client subscription
+plans. The modular architecture ensures maintainability while the strategy
+pattern allows for easy extension and modification of processing logic.
+
+The implementation prioritizes data quality, user experience, and system
+performance while providing clear business value through differentiated
+processing capabilities.
+
+================================================================================
