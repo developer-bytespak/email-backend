@@ -15,7 +15,11 @@ export class BillingService {
         id: 'pro',
         name: 'Pro Plan',
         price: 99.99,
-        features: ['10000 emails/month', 'Advanced analytics', 'Priority support'],
+        features: [
+          '10000 emails/month',
+          'Advanced analytics',
+          'Priority support',
+        ],
       },
     ];
   }
