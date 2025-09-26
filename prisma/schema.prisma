@@ -1,11 +1,10 @@
-// schema.prisma
-datasource db {
-  provider = "postgres" // You can change this to your preferred database provider.
-  url      = env("DATABASE_URL")
-}
-
 generator client {
   provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgres"
+  url      = env("DATABASE_URL")
 }
 
 model Client {
@@ -17,30 +16,30 @@ model Client {
   country      String
   address      String
   hashPassword String
-  pricePlanId  Int
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @default(now()) @updatedAt
+  pricePlanId  Int
   pricePlan    PricePlan        @relation(fields: [pricePlanId], references: [id])
-  csvUploads   CsvUpload[]
+  clientEmails ClientEmail[]
   contacts     Contact[]
+  csvUploads   CsvUpload[]
   emailDrafts  EmailDraft[]
   emailLogs    EmailLog[]
   products     ProductService[]
-  clientEmails ClientEmail[]
   smsDrafts    SmsDraft[]
   smsLogs      SmsLog[]
 }
 
 model PricePlan {
-  id           Int       @id @default(autoincrement())
-  name         String    @unique
-  displayName  String
-  description  String?
-  features     Json?
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @default(now()) @updatedAt
-  clients      Client[]
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  displayName String
+  description String?
+  features    Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  clients     Client[]
 }
 
 model CsvUpload {
@@ -50,25 +49,18 @@ model CsvUpload {
   status            CsvUploadStatus
   totalRecords      Int
   successfulRecords Int
-  invalidRecords    Int
-  duplicateRecords  Int
-  columnMapping     Json?
   description       String?
   createdAt         DateTime        @default(now())
+  columnMapping     Json?
+  duplicateRecords  Int
+  invalidRecords    Int
   processedAt       DateTime?
-  client            Client          @relation(fields: [clientId], references: [id])
   contacts          Contact[]
-}
-
-enum CsvUploadStatus {
-  pending
-  processing
-  success
-  failure
+  client            Client          @relation(fields: [clientId], references: [id])
 }
 
 model Contact {
-  id               Int           @id @default(autoincrement())
+  id               Int             @id @default(autoincrement())
   csvUploadId      Int
   clientId         Int
   businessName     String
@@ -78,33 +70,19 @@ model Contact {
   stateProvince    String?
   zip              String?
   country          String?
-  status           ContactStatus @default(new)
-  valid            Boolean       @default(false)
+  status           ContactStatus   @default(new)
+  valid            Boolean         @default(false)
   validationReason String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @default(now()) @updatedAt
   duplicateStatus  DuplicateStatus @default(unique)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @default(now()) @updatedAt
-  csvUpload        CsvUpload     @relation(fields: [csvUploadId], references: [id])
-  client           Client        @relation(fields: [clientId], references: [id])
-  summaries        Summary[]
+  client           Client          @relation(fields: [clientId], references: [id])
+  csvUpload        CsvUpload       @relation(fields: [csvUploadId], references: [id])
   emailDrafts      EmailDraft[]
-  smsDrafts        SmsDraft[]
   emailLogs        EmailLog[]
+  smsDrafts        SmsDraft[]
   smsLogs          SmsLog[]
-}
-
-enum ContactStatus {
-  new
-  enriched
-  scraped
-  summarized
-  emailed
-}
-
-enum DuplicateStatus {
-  unique
-  potential_duplicate
-  confirmed_duplicate
+  summaries        Summary[]
 }
 
 model Summary {
@@ -114,9 +92,9 @@ model Summary {
   painPoints      String?
   toneSuggestions String?
   createdAt       DateTime     @default(now())
-  contact         Contact      @relation(fields: [contactId], references: [id])
   EmailDraft      EmailDraft[]
   SmsDraft        SmsDraft[]
+  contact         Contact      @relation(fields: [contactId], references: [id])
 }
 
 model EmailDraft {
@@ -133,16 +111,10 @@ model EmailDraft {
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @default(now()) @updatedAt
   clientEmail      ClientEmail      @relation(fields: [clientEmailId], references: [id])
-  contact          Contact          @relation(fields: [contactId], references: [id])
   client           Client           @relation(fields: [clientId], references: [id])
+  contact          Contact          @relation(fields: [contactId], references: [id])
   summary          Summary          @relation(fields: [summaryId], references: [id])
   EmailLog         EmailLog[]
-}
-
-enum EmailDraftStatus {
-  draft
-  ready
-  sent
 }
 
 model EmailLog {
@@ -153,15 +125,9 @@ model EmailLog {
   status           EmailLogStatus
   providerResponse Json?
   sentAt           DateTime
-  emailDraft       EmailDraft     @relation(fields: [emailDraftId], references: [id])
-  contact          Contact        @relation(fields: [contactId], references: [id])
   client           Client         @relation(fields: [clientId], references: [id])
-}
-
-enum EmailLogStatus {
-  success
-  failed
-  bounced
+  contact          Contact        @relation(fields: [contactId], references: [id])
+  emailDraft       EmailDraft     @relation(fields: [emailDraftId], references: [id])
 }
 
 model ProductService {
@@ -173,11 +139,6 @@ model ProductService {
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @default(now()) @updatedAt
   client      Client              @relation(fields: [clientId], references: [id])
-}
-
-enum ProductServiceType {
-  product
-  service
 }
 
 model ClientEmail {
@@ -197,11 +158,6 @@ model ClientEmail {
   EmailDraft       EmailDraft[]
 }
 
-enum ClientEmailStatus {
-  active
-  inactive
-}
-
 model SmsDraft {
   id               Int            @id @default(autoincrement())
   contactId        Int
@@ -211,17 +167,11 @@ model SmsDraft {
   status           SmsDraftStatus @default(draft)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @default(now()) @updatedAt
+  clientId         Int?
+  Client           Client?        @relation(fields: [clientId], references: [id])
   contact          Contact        @relation(fields: [contactId], references: [id])
   summary          Summary?       @relation(fields: [summaryId], references: [id])
-  Client           Client?        @relation(fields: [clientId], references: [id])
-  clientId         Int?
   SmsLog           SmsLog[]
-}
-
-enum SmsDraftStatus {
-  draft
-  ready
-  sent
 }
 
 model SmsLog {
@@ -232,9 +182,58 @@ model SmsLog {
   status           SmsLogStatus
   providerResponse Json?
   sentAt           DateTime
-  smsDraft         SmsDraft     @relation(fields: [smsDraftId], references: [id])
-  contact          Contact      @relation(fields: [contactId], references: [id])
   client           Client       @relation(fields: [clientId], references: [id])
+  contact          Contact      @relation(fields: [contactId], references: [id])
+  smsDraft         SmsDraft     @relation(fields: [smsDraftId], references: [id])
+}
+
+enum CsvUploadStatus {
+  success
+  failure
+  pending
+  processing
+}
+
+enum ContactStatus {
+  new
+  enriched
+  scraped
+  summarized
+  emailed
+}
+
+enum DuplicateStatus {
+  unique
+  potential_duplicate
+  confirmed_duplicate
+}
+
+enum EmailDraftStatus {
+  draft
+  ready
+  sent
+}
+
+enum EmailLogStatus {
+  success
+  failed
+  bounced
+}
+
+enum ProductServiceType {
+  product
+  service
+}
+
+enum ClientEmailStatus {
+  active
+  inactive
+}
+
+enum SmsDraftStatus {
+  draft
+  ready
+  sent
 }
 
 enum SmsLogStatus {
