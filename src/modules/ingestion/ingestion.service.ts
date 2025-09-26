@@ -3,10 +3,18 @@ import { PrismaService } from '../../common/services/prisma.service';
 import { UploadCsvResponseDto } from './dto/upload-csv.dto';
 import { MapColumnsResponseDto, ColumnMappingDto } from './dto/column-mapping.dto';
 import { ProcessingStatusDto, ProcessingResultDto, ProcessCsvResponseDto } from './dto/processing-result.dto';
+import { StrategyFactory } from './strategies/strategy-factory';
+import { CsvParserService } from './services/csv-parser.service';
+import { DuplicateDetectorService } from './services/duplicate-detector.service';
 
 @Injectable()
 export class IngestionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly strategyFactory: StrategyFactory,
+    private readonly csvParser: CsvParserService,
+    private readonly duplicateDetector: DuplicateDetectorService,
+  ) {}
 
   async uploadCsv(file: Express.Multer.File): Promise<UploadCsvResponseDto> {
     // Validate file
@@ -94,6 +102,7 @@ export class IngestionService {
     // Validate upload exists and is ready for processing
     const csvUpload = await this.prisma.csvUpload.findUnique({
       where: { id: uploadId },
+      include: { client: { include: { pricePlan: true } } },
     });
 
     if (!csvUpload) {
@@ -104,22 +113,138 @@ export class IngestionService {
       throw new BadRequestException('CSV upload is not ready for processing');
     }
 
-    // TODO: Implement background processing
-    // For now, just update status
-    await this.prisma.csvUpload.update({
-      where: { id: uploadId },
-      data: {
-        status: 'success',
-        processedAt: new Date(),
-      },
-    });
+    try {
+      // Start processing
+      await this.prisma.csvUpload.update({
+        where: { id: uploadId },
+        data: { status: 'processing' },
+      });
 
-    return {
-      uploadId,
-      status: 'success',
-      message: 'CSV processing started',
-      startedAt: new Date(),
-    };
+      // Get processing strategy based on client's plan
+      const strategy = this.strategyFactory.createStrategy(csvUpload.client.pricePlan.name);
+
+      // TODO: Parse CSV file content (this would come from file storage)
+      // For now, simulate processing
+      const mockCsvContent = 'businessName,email,website\nTest Company,test@example.com,https://example.com';
+      const mapping = csvUpload.columnMapping as unknown as ColumnMappingDto;
+      
+      // Parse CSV data
+      const parsedRows = this.csvParser.parseCsvData(mockCsvContent, mapping);
+
+      let successfulRecords = 0;
+      let invalidRecords = 0;
+      let duplicateRecords = 0;
+
+      // Process each row
+      for (const rowData of parsedRows) {
+        try {
+          // Create contact record
+          const contact = await this.prisma.contact.create({
+            data: {
+              csvUploadId: uploadId,
+              clientId: csvUpload.clientId,
+              businessName: rowData.businessName,
+              email: rowData.email,
+              phone: rowData.phone,
+              website: rowData.website,
+              stateProvince: rowData.stateProvince,
+              zip: rowData.zip,
+              country: rowData.country,
+              status: 'new',
+              valid: false,
+              duplicateStatus: 'unique',
+            },
+          });
+
+          // Validate contact using strategy
+          const validationResult = await strategy.validateContact(contact);
+          
+          if (!validationResult.isValid) {
+            // Mark as invalid
+            await this.prisma.contact.update({
+              where: { id: contact.id },
+              data: {
+                valid: false,
+                validationReason: validationResult.reason,
+              },
+            });
+            invalidRecords++;
+            continue;
+          }
+
+          // Check for duplicates
+          const duplicateResult = await this.duplicateDetector.detectDuplicates(contact, csvUpload.clientId);
+          
+          if (duplicateResult.status !== 'unique') {
+            // Mark as duplicate
+            await this.prisma.contact.update({
+              where: { id: contact.id },
+              data: {
+                duplicateStatus: duplicateResult.status,
+                validationReason: duplicateResult.reason,
+              },
+            });
+            duplicateRecords++;
+            continue;
+          }
+
+          // Resolve website if strategy supports it
+          if (strategy.shouldProcessWebsite(contact)) {
+            const resolvedWebsite = await strategy.resolveWebsite(contact);
+            if (resolvedWebsite && resolvedWebsite !== contact.website) {
+              await this.prisma.contact.update({
+                where: { id: contact.id },
+                data: { website: resolvedWebsite },
+              });
+            }
+          }
+
+          // Mark as valid
+          await this.prisma.contact.update({
+            where: { id: contact.id },
+            data: { valid: true },
+          });
+
+          successfulRecords++;
+
+        } catch (error) {
+          console.error(`Error processing row:`, error);
+          invalidRecords++;
+        }
+      }
+
+      // Update final counts
+      await this.prisma.csvUpload.update({
+        where: { id: uploadId },
+        data: {
+          status: 'success',
+          totalRecords: parsedRows.length,
+          successfulRecords,
+          invalidRecords,
+          duplicateRecords,
+          processedAt: new Date(),
+        },
+      });
+
+      return {
+        uploadId,
+        status: 'success',
+        message: 'CSV processing completed successfully',
+        startedAt: new Date(),
+      };
+
+    } catch (error) {
+      // Mark as failed
+      await this.prisma.csvUpload.update({
+        where: { id: uploadId },
+        data: {
+          status: 'failure',
+          processedAt: new Date(),
+        },
+      });
+
+      throw new BadRequestException(`Processing failed: ${error.message}`);
+    }
   }
 
   async getProcessingStatus(uploadId: number): Promise<ProcessingStatusDto> {
