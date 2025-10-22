@@ -76,9 +76,10 @@ model Contact {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @default(now()) @updatedAt
 
-  csvUpload   CsvUpload    @relation(fields: [csvUploadId], references: [id])
+  csvUpload   CsvUpload     @relation(fields: [csvUploadId], references: [id])
   summaries   Summary[]
   emailDrafts EmailDraft[]
+  scrapedData ScrapedData[]
   smsDrafts   SmsDraft[]
   emailLogs   EmailLog[]
   smsLogs     SmsLog[]
@@ -239,4 +240,42 @@ enum SmsLogStatus {
   failed
   delivered
   undelivered
+}
+
+model ScrapedData {
+  id            Int          @id @default(autoincrement())
+  contactId     Int
+  method        ScrapeMethod
+  url           String
+  searchQuery   String?
+  discoveredUrl String?
+
+  // Scraped content (clean text for AI processing)
+  homepageText String?
+  servicesText String?
+  productsText String?
+  contactText  String?
+
+  // Raw HTML content (for SEO analysis and reference)
+  homepageHtml String?
+  servicesHtml String?
+  productsHtml String?
+  contactHtml  String?
+
+  // Extracted data
+  extractedEmails String[]
+  extractedPhones String[]
+
+  // Metadata
+  pageTitle       String?
+  metaDescription String?
+  keywords        String[]
+
+  // Status and timing
+  scrapeSuccess Boolean  @default(false)
+  errorMessage  String?
+  scrapedAt     DateTime @default(now())
+
+  // Relations
+  contact Contact @relation(fields: [contactId], references: [id])
 }
