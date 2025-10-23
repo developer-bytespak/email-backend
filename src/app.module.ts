@@ -6,6 +6,7 @@ import { IngestionModule } from './modules/ingestion/ingestion.module';
 import { ValidationModule } from './modules/validation/validation.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ScrapingModule } from './modules/scraping/scraping.module';
+import { SummarizationModule } from './modules/summarization/summarization.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ScrapingModule } from './modules/scraping/scraping.module';
     ValidationModule,
     AuthModule,
     ScrapingModule,
+    SummarizationModule,
   ],
   controllers: [AppController],
   providers: [AppService],
