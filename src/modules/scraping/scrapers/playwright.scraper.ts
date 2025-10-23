@@ -48,8 +48,19 @@ export class PlaywrightScraperService {
         timeout: 30000 
       });
       
-      // Wait for content to load
-      await page.waitForTimeout(2000);
+      // Wait for content to load - longer wait for SPAs
+      await page.waitForTimeout(5000);
+      
+      // Try to wait for specific content indicators
+      try {
+        // Wait for common content selectors to appear
+        await page.waitForSelector('body', { timeout: 10000 });
+        
+        // Wait a bit more for dynamic content to load
+        await page.waitForTimeout(2000);
+      } catch (waitError) {
+        console.log(`[PLAYWRIGHT] Content wait timeout for ${url}, proceeding with current content`);
+      }
       
       // Extract content
       const title = await page.title();
@@ -59,22 +70,24 @@ export class PlaywrightScraperService {
       // Get page content
       const content = await page.evaluate(() => {
         // Remove script and style elements
-        const scripts = document.querySelectorAll('script, style, nav, header, footer');
+        const scripts = document.querySelectorAll('script, style');
         scripts.forEach(el => el.remove());
         
-        // Get main content
+        // Get main content with better selectors for SPAs
         const contentSelectors = [
           'main', 'article', '.content', '.main-content', 
-          '#content', '.post', '.entry', 'body'
+          '#content', '.post', '.entry', '#root', '#app',
+          '.container', '.wrapper', '.page', 'body'
         ];
         
         for (const selector of contentSelectors) {
           const element = document.querySelector(selector);
-          if (element) {
+          if (element && element.textContent && element.textContent.trim().length > 100) {
             return element.textContent || '';
           }
         }
         
+        // Fallback to body content
         return document.body.textContent || '';
       });
       

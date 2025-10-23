@@ -33,8 +33,11 @@ export class ScrapingService {
    */
   async scrapeContact(contactId: number): Promise<ScrapeResult> {
     try {
-      // Get contact with validation data
-      const contact = await this.prisma.contact.findUnique({
+      // Get scraping client that uses session pool (port 5432)
+      const scrapingClient = await this.prisma.getScrapingClient();
+      
+      // Get contact with validation data using session pool
+      const contact = await scrapingClient.contact.findUnique({
         where: { id: contactId },
         include: {
           csvUpload: true,
@@ -59,8 +62,8 @@ export class ScrapingService {
         );
       }
 
-      // Update status to scraping
-      await this.prisma.contact.update({
+      // Update status to scraping using session pool
+      await scrapingClient.contact.update({
         where: { id: contactId },
         data: { status: 'scraping' as ContactStatus },
       });
@@ -83,11 +86,11 @@ export class ScrapingService {
           );
       }
 
-      // Save scraped data to database
-      const savedScrapedData = await this.prisma.scrapedData.create({
+      // Save scraped data to database using session pool
+      const savedScrapedData = await scrapingClient.scrapedData.create({
         data: {
           contactId: contact.id,
-          method: contact.scrapeMethod,
+          method: contact.scrapeMethod!,
           url: scrapedData.url || contact.website || '',
           searchQuery: scrapedData.searchQuery,
           discoveredUrl: scrapedData.discoveredUrl,
@@ -109,8 +112,8 @@ export class ScrapingService {
         },
       });
 
-      // Update contact status to scraped
-      await this.prisma.contact.update({
+      // Update contact status to scraped using session pool
+      await scrapingClient.contact.update({
         where: { id: contactId },
         data: { status: 'scraped' as ContactStatus },
       });
@@ -121,13 +124,18 @@ export class ScrapingService {
         scrapedData: savedScrapedData,
       };
     } catch (error) {
-      // Update contact status to scrape_failed
-      await this.prisma.contact.update({
-        where: { id: contactId },
-        data: { 
-          status: 'scrape_failed' as ContactStatus,
-        },
-      });
+      // Update contact status to scrape_failed using session pool
+      try {
+        const scrapingClient = await this.prisma.getScrapingClient();
+        await scrapingClient.contact.update({
+          where: { id: contactId },
+          data: { 
+            status: 'scrape_failed' as ContactStatus,
+          },
+        });
+      } catch (updateError) {
+        console.error('Failed to update contact status to scrape_failed:', updateError);
+      }
 
       return {
         contactId,
@@ -243,19 +251,68 @@ export class ScrapingService {
   }
 
   /**
+   * Detect if a website is a Single Page Application (SPA) that needs JavaScript execution
+   */
+  private async detectSPA(url: string): Promise<boolean> {
+    try {
+      // Quick check with Cheerio to see if it's likely a SPA
+      const response = await this.cheerioScraper.scrapeUrl(url);
+      
+      // Check for common SPA indicators
+      const html = response.html.toLowerCase();
+      
+      // React indicators
+      const hasReactRoot = html.includes('id="root"') || html.includes('id="app"');
+      const hasReactScripts = html.includes('react') || html.includes('_react') || html.includes('react-dom');
+      const hasVueIndicators = html.includes('vue') || html.includes('v-') || html.includes('@vue');
+      const hasAngularIndicators = html.includes('angular') || html.includes('ng-') || html.includes('@angular');
+      
+      // Check if content is minimal (typical of SPAs)
+      const contentLength = response.content.trim().length;
+      const isMinimalContent = contentLength < 500; // Very little static content
+      
+      // Check for common SPA frameworks in meta tags or scripts
+      const hasSPAMeta = html.includes('next.js') || html.includes('nuxt') || html.includes('gatsby') || 
+                        html.includes('svelte') || html.includes('preact');
+      
+      const isSPA = (hasReactRoot && (hasReactScripts || isMinimalContent)) || 
+                   hasVueIndicators || 
+                   hasAngularIndicators || 
+                   hasSPAMeta ||
+                   (isMinimalContent && hasReactRoot);
+      
+      console.log(`[SPA-DETECT] URL: ${url}, isSPA: ${isSPA}, contentLength: ${contentLength}, hasReactRoot: ${hasReactRoot}`);
+      
+      return isSPA;
+    } catch (error) {
+      console.log(`[SPA-DETECT] Error detecting SPA for ${url}, defaulting to Playwright:`, error.message);
+      // If we can't detect, default to Playwright for better coverage
+      return true;
+    }
+  }
+
+  /**
    * Priority 1: Scrape directly from website URL
    */
   private async scrapeDirectUrl(contact: any): Promise<any> {
     console.log(`[SCRAPE] Direct URL scraping for: ${contact.website}`);
     
     try {
+      // Check if this is likely a SPA/React site that needs Playwright
+      const isSPA = await this.detectSPA(contact.website);
+      
       // Scrape homepage first
       let homepageData;
-      try {
-        homepageData = await this.cheerioScraper.scrapeUrl(contact.website);
-      } catch (cheerioError) {
-        console.log(`[SCRAPE] Cheerio failed, trying Playwright for: ${contact.website}`);
+      if (isSPA) {
+        console.log(`[SCRAPE] Detected SPA/React site, using Playwright for: ${contact.website}`);
         homepageData = await this.playwrightScraper.scrapeUrl(contact.website);
+      } else {
+        try {
+          homepageData = await this.cheerioScraper.scrapeUrl(contact.website);
+        } catch (cheerioError) {
+          console.log(`[SCRAPE] Cheerio failed, trying Playwright for: ${contact.website}`);
+          homepageData = await this.playwrightScraper.scrapeUrl(contact.website);
+        }
       }
 
       // Discover and scrape additional pages
@@ -426,10 +483,30 @@ export class ScrapingService {
     
     try {
       // Extract internal links from homepage
-      const internalLinks = homepageData.links || [];
+      let internalLinks = homepageData.links || [];
+      
+      // If homepage was scraped with Playwright, we already have good links
+      // If not, try to get better links using Playwright for SPAs
+      if (internalLinks.length === 0 || this.isLikelySPA(homepageData)) {
+        console.log(`[SCRAPE] Re-scraping homepage with Playwright for better link discovery`);
+        try {
+          const enhancedHomepageData = await this.playwrightScraper.scrapeUrl(baseUrl);
+          internalLinks = enhancedHomepageData.links || [];
+          console.log(`[SCRAPE] Found ${internalLinks.length} links with Playwright`);
+        } catch (playwrightError) {
+          console.log(`[SCRAPE] Playwright link discovery failed: ${playwrightError.message}`);
+        }
+      }
       
       // Find potential page URLs
       const pageUrls = this.findPageUrls(baseUrl, internalLinks);
+      
+      // If no pages found through links, try common URL patterns
+      if (Object.keys(pageUrls).length === 0) {
+        console.log(`[SCRAPE] No pages found through links, trying common URL patterns`);
+        const commonUrls = this.generateCommonUrls(baseUrl);
+        Object.assign(pageUrls, commonUrls);
+      }
       
       // Scrape each discovered page
       for (const [pageType, url] of Object.entries(pageUrls)) {
@@ -437,12 +514,21 @@ export class ScrapingService {
           try {
             console.log(`[SCRAPE] Scraping ${pageType} page: ${url}`);
             
-            // Try Cheerio first, fallback to Playwright
+            // Check if this page is likely a SPA and use appropriate scraper
+            const isSPA = await this.detectSPA(url);
             let pageData;
-            try {
-              pageData = await this.cheerioScraper.scrapeUrl(url);
-            } catch (cheerioError) {
+            
+            if (isSPA) {
+              console.log(`[SCRAPE] Detected SPA for ${pageType} page, using Playwright`);
               pageData = await this.playwrightScraper.scrapeUrl(url);
+            } else {
+              // Try Cheerio first, fallback to Playwright
+              try {
+                pageData = await this.cheerioScraper.scrapeUrl(url);
+              } catch (cheerioError) {
+                console.log(`[SCRAPE] Cheerio failed for ${pageType}, using Playwright`);
+                pageData = await this.playwrightScraper.scrapeUrl(url);
+              }
             }
             
             additionalPages[pageType] = {
@@ -469,25 +555,73 @@ export class ScrapingService {
   }
 
   /**
+   * Check if homepage data suggests it's a SPA
+   */
+  private isLikelySPA(homepageData: any): boolean {
+    const contentLength = homepageData.content?.trim().length || 0;
+    const hasReactRoot = homepageData.html?.includes('id="root"') || homepageData.html?.includes('id="app"');
+    return contentLength < 500 || hasReactRoot;
+  }
+
+  /**
+   * Generate common URL patterns to try when link discovery fails
+   */
+  private generateCommonUrls(baseUrl: string): any {
+    const baseUrlObj = new URL(baseUrl);
+    const basePath = baseUrlObj.pathname.endsWith('/') ? baseUrlObj.pathname.slice(0, -1) : baseUrlObj.pathname;
+    
+    return {
+      services: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/services`,
+      products: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/products`,
+      contact: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/contact`,
+    };
+  }
+
+  /**
+   * Simple fuzzy matching for URL patterns
+   */
+  private fuzzyMatch(pathname: string, pattern: string): boolean {
+    const cleanPath = pathname.replace(/[^a-z]/g, '');
+    const cleanPattern = pattern.replace(/[^a-z]/g, '');
+    
+    // Check if pattern words are contained in pathname
+    const patternWords = cleanPattern.split('').filter(char => char !== '');
+    const pathWords = cleanPath.split('').filter(char => char !== '');
+    
+    // Simple similarity check
+    let matches = 0;
+    for (const word of patternWords) {
+      if (pathWords.includes(word)) {
+        matches++;
+      }
+    }
+    
+    return matches >= Math.min(3, patternWords.length);
+  }
+
+  /**
    * Find potential page URLs from internal links
    */
   private findPageUrls(baseUrl: string, links: string[]): any {
     const baseDomain = new URL(baseUrl).hostname;
     const pageUrls: any = {};
     
-    // Common page patterns to look for
+    // Enhanced page patterns to look for (more flexible matching)
     const pagePatterns = {
       services: [
         '/services', '/service', '/what-we-do', '/our-services',
-        '/offerings', '/solutions', '/expertise'
+        '/offerings', '/solutions', '/expertise', '/capabilities',
+        '/what-we-offer', '/our-work', '/specialties', '/practice-areas'
       ],
       products: [
         '/products', '/product', '/catalog', '/portfolio',
-        '/gallery', '/work', '/projects'
+        '/gallery', '/work', '/projects', '/showcase',
+        '/portfolio', '/gallery', '/case-studies', '/examples'
       ],
       contact: [
         '/contact', '/contact-us', '/get-in-touch', '/reach-us',
-        '/about', '/about-us', '/company'
+        '/about', '/about-us', '/company', '/team',
+        '/location', '/locations', '/office', '/offices'
       ]
     };
     
@@ -499,30 +633,36 @@ export class ScrapingService {
         
         // Check if link is from same domain
         if (linkUrl.hostname === baseDomain) {
-          // Check for services pages
+          // Check for services pages (more flexible matching)
           if (!pageUrls.services) {
             for (const pattern of pagePatterns.services) {
-              if (pathname.includes(pattern)) {
+              if (pathname.includes(pattern) || 
+                  pathname.includes(pattern.replace('/', '')) ||
+                  this.fuzzyMatch(pathname, pattern)) {
                 pageUrls.services = link;
                 break;
               }
             }
           }
           
-          // Check for products pages
+          // Check for products pages (more flexible matching)
           if (!pageUrls.products) {
             for (const pattern of pagePatterns.products) {
-              if (pathname.includes(pattern)) {
+              if (pathname.includes(pattern) || 
+                  pathname.includes(pattern.replace('/', '')) ||
+                  this.fuzzyMatch(pathname, pattern)) {
                 pageUrls.products = link;
                 break;
               }
             }
           }
           
-          // Check for contact pages
+          // Check for contact pages (more flexible matching)
           if (!pageUrls.contact) {
             for (const pattern of pagePatterns.contact) {
-              if (pathname.includes(pattern)) {
+              if (pathname.includes(pattern) || 
+                  pathname.includes(pattern.replace('/', '')) ||
+                  this.fuzzyMatch(pathname, pattern)) {
                 pageUrls.contact = link;
                 break;
               }
