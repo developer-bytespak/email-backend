@@ -106,15 +106,21 @@ enum ScrapeMethod {
 }
 
 model Summary {
-  id              Int          @id @default(autoincrement())
-  contactId       Int
-  summaryText     String
-  painPoints      String?
-  toneSuggestions String?
-  createdAt       DateTime     @default(now())
-  contact         Contact      @relation(fields: [contactId], references: [id])
-  EmailDraft      EmailDraft[]
-  SmsDraft        SmsDraft[]
+  id            Int          @id @default(autoincrement())
+  contactId     Int
+  scrapedDataId Int? // Link to specific scraped data
+  summaryText   String // AI-generated business summary
+  painPoints    String[] // Array of identified pain points
+  strengths     String[] // Array of business strengths
+  opportunities String[] // Array of service opportunities
+  keywords      String[] // Array of relevant keywords
+  aiModel       String       @default("gemini-2.0-flash-lite") // AI model used
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @default(now()) @updatedAt
+  contact       Contact      @relation(fields: [contactId], references: [id])
+  scrapedData   ScrapedData? @relation(fields: [scrapedDataId], references: [id])
+  EmailDraft    EmailDraft[]
+  SmsDraft      SmsDraft[]
 }
 
 model EmailDraft {
@@ -277,5 +283,6 @@ model ScrapedData {
   scrapedAt     DateTime @default(now())
 
   // Relations
-  contact Contact @relation(fields: [contactId], references: [id])
+  contact   Contact   @relation(fields: [contactId], references: [id])
+  summaries Summary[]
 }
