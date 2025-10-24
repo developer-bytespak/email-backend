@@ -206,4 +206,40 @@ Guidelines:
       summary: analysis.summary
     };
   }
+
+  /**
+   * Generate SMS content using Gemini AI
+   * This method handles SMS-specific prompts and extracts clean SMS text
+   */
+  async generateSmsContent(prompt: string): Promise<string> {
+    try {
+      const response = await this.callGeminiAPI(prompt);
+      return this.extractSmsFromResponse(response.text);
+    } catch (error) {
+      this.logger.error('Failed to generate SMS content:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Extract SMS message from Gemini response
+   * Handles responses that contain both JSON and SMS text
+   */
+  private extractSmsFromResponse(responseText: string): string {
+    // If response contains both JSON and SMS, extract the SMS part
+    const lines = responseText.split('\n');
+    
+    // Look for SMS message after JSON block
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      // Skip empty lines and JSON closing braces
+      if (line && !line.startsWith('}') && !line.startsWith('```')) {
+        // This should be our SMS message
+        return line.replace(/^["']|["']$/g, '').trim();
+      }
+    }
+    
+    // Fallback: return the last non-empty line
+    return lines.filter(line => line.trim()).pop()?.trim() || 'Business analysis completed';
+  }
 }
