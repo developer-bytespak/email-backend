@@ -15,8 +15,11 @@ export class AuthService {
   async signup(signupDto: SignupDto) {
     const { email, password, ...clientData } = signupDto;
 
+    // Use scraping client to avoid prepared statement conflicts
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
     // Check if client already exists
-    const existingClient = await this.prisma.client.findUnique({
+    const existingClient = await scrapingClient.client.findUnique({
       where: { email },
     });
 
@@ -29,7 +32,7 @@ export class AuthService {
     const hashPassword = await bcrypt.hash(password, saltRounds);
 
     // Create client
-    const client = await this.prisma.client.create({
+    const client = await scrapingClient.client.create({
       data: {
         ...clientData,
         email,
@@ -53,7 +56,9 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const client = await this.prisma.client.findUnique({
+    // Use scraping client to avoid prepared statement conflicts
+    const scrapingClient = await this.prisma.getScrapingClient();
+    const client = await scrapingClient.client.findUnique({
       where: { email },
     });
 
@@ -84,7 +89,9 @@ export class AuthService {
   }
 
   async validateClient(clientId: number) {
-    const client = await this.prisma.client.findUnique({
+    // Use scraping client to avoid prepared statement conflicts
+    const scrapingClient = await this.prisma.getScrapingClient();
+    const client = await scrapingClient.client.findUnique({
       where: { id: clientId },
       select: {
         id: true,
@@ -102,7 +109,9 @@ export class AuthService {
   }
 
   async validateClientCredentials(email: string, password: string) {
-    const client = await this.prisma.client.findUnique({
+    // Use scraping client to avoid prepared statement conflicts
+    const scrapingClient = await this.prisma.getScrapingClient();
+    const client = await scrapingClient.client.findUnique({
       where: { email },
     });
 
