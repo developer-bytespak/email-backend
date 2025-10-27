@@ -1,15 +1,29 @@
 import { Controller, Post, Body, Get, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { IsNumber, IsOptional, IsString, IsArray, IsIn } from 'class-validator';
 import { EmailsService } from './emails.service';
 
 export class SendEmailDraftDto {
+  @IsNumber()
   draftId: number;
 }
 
 export class CreateCampaignDto {
+  @IsString()
   name: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsArray()
+  @IsNumber({}, { each: true })
   contactIds: number[];
+
+  @IsNumber()
   clientEmailId: number;
+
+  @IsOptional()
+  @IsIn(['friendly', 'professional', 'pro_friendly'])
   tone?: 'friendly' | 'professional' | 'pro_friendly';
 }
 
