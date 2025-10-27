@@ -7,6 +7,7 @@ import { ValidationModule } from './modules/validation/validation.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ScrapingModule } from './modules/scraping/scraping.module';
 import { SummarizationModule } from './modules/summarization/summarization.module';
+import { SmsModule } from './modules/sms/sms.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { SummarizationModule } from './modules/summarization/summarization.modul
     AuthModule,
     ScrapingModule,
     SummarizationModule,
+    SmsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
