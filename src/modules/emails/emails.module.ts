@@ -7,6 +7,6 @@ import { EmailGenerationModule } from './generation/email-generation.module';
   imports: [EmailGenerationModule],
   controllers: [EmailsController],
   providers: [EmailsService],
-  exports: [EmailsService, EmailGenerationModule],
+  exports: [EmailsService],
 })
 export class EmailsModule {}

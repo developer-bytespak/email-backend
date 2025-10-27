@@ -11,19 +11,36 @@ import {
   ParseIntPipe,
   ValidationPipe
 } from '@nestjs/common';
-import { EmailGenerationService, EmailGenerationRequest, EmailTone } from './email-generation.service';
+import { IsNumber, IsOptional, IsIn } from 'class-validator';
+import { EmailGenerationService, EmailGenerationRequest } from './email-generation.service';
+import type { EmailTone } from './email-generation.service';
 
 export class GenerateEmailDto {
+  @IsNumber()
   contactId: number;
+
+  @IsNumber()
   summaryId: number;
+
+  @IsNumber()
   clientEmailId: number;
+
+  @IsOptional()
+  @IsIn(['friendly', 'professional', 'pro_friendly'])
   tone?: EmailTone;
 }
 
 export class UpdateEmailDraftDto {
+  @IsOptional()
   subjectLine?: string;
+
+  @IsOptional()
   bodyText?: string;
+
+  @IsOptional()
   icebreaker?: string;
+
+  @IsOptional()
   productsRelevant?: string;
 }
 
