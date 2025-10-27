@@ -8,6 +8,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   private scrapingClient: PrismaClient | null = null;
 
   constructor() {
+    // Modify DATABASE_URL to disable prepared statements
+    const databaseUrl = process.env.DATABASE_URL;
+    const directUrl = process.env.DIRECT_URL;
+    
+    // Supabase-specific configuration with proper pooling
+    const modifiedUrl = databaseUrl?.includes('?') 
+      ? `${databaseUrl}&pgbouncer=true&connection_limit=5&pool_timeout=20`
+      : `${databaseUrl}?pgbouncer=true&connection_limit=5&pool_timeout=20`;
+    
+    const modifiedDirectUrl = directUrl?.includes('?') 
+      ? `${directUrl}&connection_limit=5&pool_timeout=20`
+      : `${directUrl}?connection_limit=5&pool_timeout=20`;
+
     super({
       log: [
         { emit: 'event', level: 'query' },
@@ -18,9 +31,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       errorFormat: 'pretty',
       datasources: {
         db: {
-          url: process.env.DATABASE_URL,
+          url: modifiedUrl,
         },
       },
+      transactionOptions: {
+        maxWait: 10000, // 10 seconds
+        timeout: 30000, // 30 seconds
+        },
     });
 
     // Log queries in development
@@ -77,8 +94,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async getScrapingClient(): Promise<PrismaClient> {
     if (!this.scrapingClient) {
-      // Create a new Prisma client specifically for scraping using session pool
-      const sessionPoolUrl = process.env.DATABASE_URL?.replace(/:\d+/, ':5432') || process.env.DATABASE_URL;
+      // Use DIRECT_URL for scraping client (session pool)
+      const directUrl = process.env.DIRECT_URL;
+      const modifiedScrapingUrl = directUrl?.includes('?') 
+        ? `${directUrl}&prepared_statements=false`
+        : `${directUrl}?prepared_statements=false`;
       
       this.scrapingClient = new PrismaClient({
         log: [
@@ -90,14 +110,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         errorFormat: 'pretty',
         datasources: {
           db: {
-            url: sessionPoolUrl,
+            url: modifiedScrapingUrl,
           },
         },
       });
 
       // Connect the scraping client
       await this.scrapingClient.$connect();
-      this.logger.log('🔗 Scraping client connected to session pool (port 5432)');
+      this.logger.log('🔗 Scraping client connected to session pool (DIRECT_URL)');
     }
     
     return this.scrapingClient;
@@ -120,7 +140,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
-   * Execute query with connection retry
+   * Execute query with connection retry and aggressive conflict resolution
    */
   async executeWithRetry<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
     let lastError: Error | undefined;
@@ -134,16 +154,24 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         
         // Check if it's a prepared statement conflict
         if (error.message?.includes('prepared statement') || 
-            error.message?.includes('already exists')) {
-          this.logger.warn(`🔄 Prepared statement conflict (attempt ${attempt}/${maxRetries}), retrying...`);
+            error.message?.includes('already exists') ||
+            error.message?.includes('42P05')) {
+          this.logger.warn(`🔄 Prepared statement conflict (attempt ${attempt}/${maxRetries}), forcing complete reconnection...`);
           
-          // Force disconnect and reconnect
+          // Force complete disconnect and recreate connection
           try {
             await this.$disconnect();
             this.isConnected = false;
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            
+            // Wait longer and force garbage collection
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Force recreate the Prisma client with fresh connection
+            await this.recreateClient();
+            
+            this.logger.debug('🔄 Prisma client recreated successfully');
           } catch (disconnectError) {
-            this.logger.warn('Failed to disconnect during retry:', disconnectError);
+            this.logger.warn('Failed to recreate client during retry:', disconnectError);
           }
           
           continue;
@@ -158,12 +186,152 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   /**
-   * Safe database operations with automatic retry
+   * Recreate Prisma client to avoid prepared statement conflicts
+   */
+  private async recreateClient(): Promise<void> {
+    try {
+      // Disconnect current client
+      await this.$disconnect();
+      
+      // Create new client instance with fresh connection using proper Supabase pooling
+      const databaseUrl = process.env.DATABASE_URL;
+      const modifiedUrl = databaseUrl?.includes('?') 
+        ? `${databaseUrl}&pgbouncer=true&connection_limit=5&pool_timeout=20`
+        : `${databaseUrl}?pgbouncer=true&connection_limit=5&pool_timeout=20`;
+      
+      // Recreate the client with minimal connection pool
+      Object.assign(this, new PrismaClient({
+        log: [
+          { emit: 'event', level: 'query' },
+          { emit: 'event', level: 'error' },
+          { emit: 'event', level: 'info' },
+          { emit: 'event', level: 'warn' },
+        ],
+        errorFormat: 'pretty',
+        datasources: {
+          db: {
+            url: modifiedUrl,
+          },
+        },
+        transactionOptions: {
+          maxWait: 10000,
+          timeout: 30000,
+        },
+      }));
+
+      // Reconnect
+      await this.$connect();
+      this.isConnected = true;
+      
+      // Re-setup event listeners
+      if (process.env.NODE_ENV === 'development') {
+        this.$on('query' as never, (e: any) => {
+          this.logger.debug(`Query: ${e.query}`);
+          this.logger.debug(`Duration: ${e.duration}ms`);
+        });
+      }
+
+      this.$on('error' as never, (e: any) => {
+        this.logger.error(`Prisma Error: ${e.message}`);
+      });
+      
+    } catch (error) {
+      this.logger.error('Failed to recreate Prisma client:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Safe database operations with automatic retry and Supabase-specific handling
    */
   async safeFindUnique<T>(model: any, args: any): Promise<T | null> {
     return this.executeWithRetry(async () => {
-      return await model.findUnique(args);
+      try {
+        return await model.findUnique(args);
+      } catch (error: any) {
+        // If it's a prepared statement error, try raw SQL as fallback
+        if (error.message?.includes('prepared statement') || 
+            error.message?.includes('already exists') ||
+            error.message?.includes('42P05')) {
+          this.logger.warn('🔄 Prepared statement conflict, trying raw SQL fallback');
+          return await this.executeRawQuery(args);
+        }
+        throw error;
+      }
     });
+  }
+
+  /**
+   * Execute operation with Supabase-optimized connection strategy
+   */
+  async executeWithSupabaseStrategy<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      // First try with pooled connection (faster for most operations)
+      return await operation();
+    } catch (error: any) {
+      // If pooled connection fails due to prepared statements, switch to direct connection
+      if (error.message?.includes('prepared statement') || 
+          error.message?.includes('already exists') ||
+          error.message?.includes('42P05')) {
+        this.logger.warn('🔄 Switching to direct connection for this operation');
+        return await this.executeWithDirectConnection(operation);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Execute operation using direct connection (bypasses pooler)
+   */
+  private async executeWithDirectConnection<T>(operation: () => Promise<T>): Promise<T> {
+    const directUrl = process.env.DIRECT_URL;
+    if (!directUrl) {
+      throw new Error('DIRECT_URL not configured');
+    }
+
+    // Create a temporary direct connection client
+    const directClient = new PrismaClient({
+      datasources: {
+        db: {
+          url: directUrl,
+        },
+      },
+    });
+
+    try {
+      await directClient.$connect();
+      // Replace the model's client temporarily
+      const originalClient = this;
+      Object.assign(this, directClient);
+      
+      const result = await operation();
+      
+      // Restore original client
+      Object.assign(this, originalClient);
+      
+      return result;
+    } finally {
+      await directClient.$disconnect();
+    }
+  }
+
+  /**
+   * Execute raw SQL query as fallback for prepared statement conflicts
+   */
+  private async executeRawQuery(args: any): Promise<any> {
+    const { where } = args;
+    if (!where || !where.email) {
+      throw new Error('Raw query fallback only supports email lookup');
+    }
+
+    const result = await this.$queryRaw`
+      SELECT id, name, email, phone, city, country, address, "hashPassword", "createdAt", "updatedAt"
+      FROM "Client" 
+      WHERE email = ${where.email}
+      LIMIT 1
+    `;
+    
+    return Array.isArray(result) ? result[0] : result;
   }
 
   async safeUpdate<T>(model: any, args: any): Promise<T> {
@@ -175,6 +343,18 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   async safeCreate<T>(model: any, args: any): Promise<T> {
     return this.executeWithRetry(async () => {
       return await model.create(args);
+    });
+  }
+
+  async safeFindMany<T>(model: any, args?: any): Promise<T[]> {
+    return this.executeWithRetry(async () => {
+      return await model.findMany(args);
+    });
+  }
+
+  async safeDelete<T>(model: any, args: any): Promise<T> {
+    return this.executeWithRetry(async () => {
+      return await model.delete(args);
     });
   }
 

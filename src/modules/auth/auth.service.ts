@@ -15,9 +15,11 @@ export class AuthService {
   async signup(signupDto: SignupDto) {
     const { email, password, ...clientData } = signupDto;
 
-    // Check if client already exists
-    const existingClient = await this.prisma.client.findUnique({
-      where: { email },
+    // Check if client already exists using Supabase strategy
+    const existingClient = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.findUnique({
+        where: { email },
+      });
     });
 
     if (existingClient) {
@@ -28,23 +30,25 @@ export class AuthService {
     const saltRounds = 10;
     const hashPassword = await bcrypt.hash(password, saltRounds);
 
-    // Create client
-    const client = await this.prisma.client.create({
-      data: {
-        ...clientData,
-        email,
-        hashPassword,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        city: true,
-        country: true,
-        address: true,
-        createdAt: true,
-      },
+    // Create client using Supabase strategy
+    const client = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.create({
+        data: {
+          ...clientData,
+          email,
+          hashPassword,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          city: true,
+          country: true,
+          address: true,
+          createdAt: true,
+        },
+      });
     });
 
     return client;
@@ -53,8 +57,10 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const client = await this.prisma.client.findUnique({
-      where: { email },
+    const client = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.findUnique({
+        where: { email },
+      });
     });
 
     if (!client) {
@@ -84,27 +90,31 @@ export class AuthService {
   }
 
   async validateClient(clientId: number) {
-    const client = await this.prisma.client.findUnique({
-      where: { id: clientId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        city: true,
-        country: true,
-        address: true,
-        createdAt: true,
-      },
-    });
+    const client = await this.prisma.safeFindUnique<any>(
+      this.prisma.client,
+      {
+        where: { id: clientId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          city: true,
+          country: true,
+          address: true,
+          createdAt: true,
+        },
+      }
+    );
 
     return client;
   }
 
   async validateClientCredentials(email: string, password: string) {
-    const client = await this.prisma.client.findUnique({
-      where: { email },
-    });
+    const client = await this.prisma.safeFindUnique<any>(
+      this.prisma.client,
+      { where: { email } }
+    );
 
     if (!client) {
       return null;
