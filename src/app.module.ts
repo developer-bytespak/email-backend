@@ -8,6 +8,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { ScrapingModule } from './modules/scraping/scraping.module';
 import { SummarizationModule } from './modules/summarization/summarization.module';
 import { SmsModule } from './modules/sms/sms.module';
+import { EmailsModule } from './modules/emails/emails.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { SmsModule } from './modules/sms/sms.module';
     ScrapingModule,
     SummarizationModule,
     SmsModule,
+    EmailsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

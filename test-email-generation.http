@@ -1,0 +1,74 @@
+### Test Email Generation API
+
+# 1. Generate Single Email Draft
+POST http://localhost:3000/emails/generation/generate
+Content-Type: application/json
+
+{
+  "contactId": 1,
+  "summaryId": 1,
+  "clientEmailId": 1,
+  "tone": "pro_friendly"
+}
+
+###
+
+# 2. Generate Professional Tone Email
+POST http://localhost:3000/emails/generation/generate
+Content-Type: application/json
+
+{
+  "contactId": 2,
+  "summaryId": 2,
+  "clientEmailId": 1,
+  "tone": "professional"
+}
+
+###
+
+# 3. Generate Friendly Tone Email
+POST http://localhost:3000/emails/generation/generate
+Content-Type: application/json
+
+{
+  "contactId": 1,
+  "summaryId": 1,
+  "clientEmailId": 1,
+  "tone": "friendly"
+}
+
+###
+
+# 4. Get Generated Email Draft
+GET http://localhost:3000/emails/generation/drafts/1
+
+###
+
+# 5. Create Email Campaign
+POST http://localhost:3000/emails/campaign
+Content-Type: application/json
+
+{
+  "name": "Test Campaign - Tech Companies",
+  "description": "Outreach to technology companies for cloud solutions",
+  "contactIds": [1, 2],
+  "clientEmailId": 1,
+  "tone": "pro_friendly"
+}
+
+###
+
+# 6. Get Email Templates
+GET http://localhost:3000/emails/templates
+
+###
+
+# 7. Get Campaign Details
+GET http://localhost:3000/emails/campaigns/campaign_1738000000000
+
+###
+
+# 8. Get Email Analytics
+GET http://localhost:3000/emails/analytics?contactId=1
+
+###
