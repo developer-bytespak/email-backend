@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../config/prisma.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import * as bcrypt from 'bcryptjs';
 
 @Injectable()
@@ -134,5 +135,70 @@ export class AuthService {
       country: client.country,
       address: client.address,
     };
+  }
+
+  async getProfile(clientId: number) {
+    const client = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.findUnique({
+        where: { id: clientId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          city: true,
+          country: true,
+          address: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    });
+
+    if (!client) {
+      throw new UnauthorizedException('Client not found');
+    }
+
+    return client;
+  }
+
+  async updateProfile(clientId: number, updateProfileDto: UpdateProfileDto) {
+    // Check if client exists
+    const existingClient = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.findUnique({
+        where: { id: clientId },
+      });
+    });
+
+    if (!existingClient) {
+      throw new UnauthorizedException('Client not found');
+    }
+
+    // Update client profile using Supabase strategy
+    const updatedClient = await this.prisma.executeWithSupabaseStrategy(async () => {
+      return await this.prisma.client.update({
+        where: { id: clientId },
+        data: {
+          name: updateProfileDto.name,
+          phone: updateProfileDto.phone,
+          city: updateProfileDto.city,
+          country: updateProfileDto.country,
+          address: updateProfileDto.address,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          city: true,
+          country: true,
+          address: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    });
+
+    return updatedClient;
   }
 }
