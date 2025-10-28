@@ -8,10 +8,12 @@ import {
   HttpCode,
   HttpStatus,
   Get,
+  Put,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -55,8 +57,22 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  getProfile(@Request() req) {
-    return req.user;
+  async getProfile(@Request() req) {
+    const profile = await this.authService.getProfile(req.user.id);
+    return {
+      message: 'Profile retrieved successfully',
+      profile,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('profile')
+  async updateProfile(@Request() req, @Body() updateProfileDto: UpdateProfileDto) {
+    const updatedProfile = await this.authService.updateProfile(req.user.id, updateProfileDto);
+    return {
+      message: 'Profile updated successfully',
+      profile: updatedProfile,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
