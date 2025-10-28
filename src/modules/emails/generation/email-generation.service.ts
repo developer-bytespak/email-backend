@@ -31,7 +31,7 @@ export class EmailGenerationService {
 
   constructor(
     private readonly prisma: PrismaService,
-  ) {}
+  ) { }
 
   /**
    * Generate personalized outreach email using AI summary
@@ -40,7 +40,7 @@ export class EmailGenerationService {
     try {
       // Get scraping client to avoid prepared statement conflicts
       const scrapingClient = await this.prisma.getScrapingClient();
-      
+
       // Get contact, summary, and client email data
       const contact = await scrapingClient.contact.findUnique({
         where: { id: request.contactId },
@@ -147,7 +147,7 @@ export class EmailGenerationService {
 
     } catch (error) {
       this.logger.error(`❌ Email generation failed for contact ${request.contactId}:`, error);
-      
+
       return {
         contactId: request.contactId,
         summaryId: request.summaryId,
@@ -159,7 +159,7 @@ export class EmailGenerationService {
   }
 
   /**
-   * Generate email content using Gemini AI with Bytes Platform context
+   * Generate email content using Gemini AI
    */
   private async generateEmailContent(
     summary: any,
@@ -167,7 +167,7 @@ export class EmailGenerationService {
     tone: EmailTone
   ): Promise<GeneratedEmailContent> {
     const prompt = this.buildEmailGenerationPrompt(summary, contact, tone);
-    
+
     try {
       // Call Gemini API directly for email generation
       const response = await this.callGeminiAPIForEmail(prompt);
@@ -218,7 +218,7 @@ export class EmailGenerationService {
     }
 
     const data = await response.json();
-    
+
     if (data.candidates && data.candidates.length > 0) {
       return {
         text: data.candidates[0].content.parts[0].text,
@@ -234,11 +234,11 @@ export class EmailGenerationService {
    */
   private buildEmailGenerationPrompt(summary: any, contact: any, tone: EmailTone): string {
     const toneInstructions = this.getToneInstructions(tone);
-    
+
     // Extract scraped data details
     const scrapedData = summary.scrapedData;
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
-    
+
     return `
 You are a B2B outreach specialist writing for Bytes Platform. Create a personalized email that directly addresses specific business challenges.
 
@@ -271,19 +271,19 @@ ${scrapedDetails}
 2. Address 1-2 specific pain points mentioned above
 3. Connect their pain points to specific Bytes Platform services
 4. Use ${toneInstructions} tone
-5. Keep email 100-140 words, 2 paragraphs max
+5. Keep email 100-180 words, 2-3 paragraphs max
 6. Include soft call-to-action
 
 **OUTPUT FORMAT:**
 {
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
   "emailBody": "Complete email body text here (100-140 words, 2 paragraphs)",
-  "icebreaker": "Single compelling opening sentence that hooks attention (15-25 words max)",
+  "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
   "rationale": "Which pain point was addressed and which Bytes Platform service was offered as solution"
 }
 
 **ICE BREAKER GUIDELINES:**
-- Must be EXACTLY ONE sentence (15-25 words maximum)
+- Must be EXACTLY ONE sentence (25-35 words maximum)
 - Should reference something specific from their business/website
 - Should create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
@@ -300,38 +300,38 @@ ${scrapedDetails}
     }
 
     const details: string[] = [];
-    
+
     if (scrapedData.pageTitle) {
       details.push(`Page Title: ${scrapedData.pageTitle}`);
     }
-    
+
     if (scrapedData.metaDescription) {
       details.push(`Meta Description: ${scrapedData.metaDescription}`);
     }
-    
+
     if (scrapedData.homepageText) {
       const homepagePreview = scrapedData.homepageText.substring(0, 300);
       details.push(`Homepage Content: ${homepagePreview}${scrapedData.homepageText.length > 300 ? '...' : ''}`);
     }
-    
+
     if (scrapedData.servicesText) {
       const servicesPreview = scrapedData.servicesText.substring(0, 200);
       details.push(`Services: ${servicesPreview}${scrapedData.servicesText.length > 200 ? '...' : ''}`);
     }
-    
+
     if (scrapedData.productsText) {
       const productsPreview = scrapedData.productsText.substring(0, 200);
       details.push(`Products: ${productsPreview}${scrapedData.productsText.length > 200 ? '...' : ''}`);
     }
-    
+
     if (scrapedData.keywords && scrapedData.keywords.length > 0) {
       details.push(`Keywords: ${scrapedData.keywords.join(', ')}`);
     }
-    
+
     if (scrapedData.extractedEmails && scrapedData.extractedEmails.length > 0) {
       details.push(`Contact Emails: ${scrapedData.extractedEmails.join(', ')}`);
     }
-    
+
     return details.length > 0 ? details.join('\n') : 'Limited scraped data available';
   }
 
@@ -357,7 +357,7 @@ ${scrapedDetails}
   private parseEmailResponse(responseText: string): GeneratedEmailContent {
     try {
       this.logger.debug('Raw Gemini response:', responseText);
-      
+
       // Clean the response text (remove markdown formatting if present)
       let cleanText = responseText
         .replace(/```json\n?/g, '')
@@ -365,47 +365,47 @@ ${scrapedDetails}
         .replace(/^```/g, '')
         .replace(/```$/g, '')
         .trim();
-      
+
       // Try to extract JSON from the response if it's embedded in text
       const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         cleanText = jsonMatch[0];
       }
-      
+
       // Parse JSON response
       const parsed = JSON.parse(cleanText);
-      
+
       // Validate required fields
-      if (!parsed.subjectLines || !Array.isArray(parsed.subjectLines) || 
-          !parsed.emailBody || !parsed.icebreaker || !parsed.rationale) {
+      if (!parsed.subjectLines || !Array.isArray(parsed.subjectLines) ||
+        !parsed.emailBody || !parsed.icebreaker || !parsed.rationale) {
         this.logger.warn('Invalid response format from Gemini API:', parsed);
         throw new Error('Invalid response format from Gemini API');
       }
-      
-       // Clean and validate icebreaker (should be a single sentence)
-       let cleanIcebreaker = parsed.icebreaker.trim();
-       if (cleanIcebreaker.includes('\n')) {
-         cleanIcebreaker = cleanIcebreaker.split('\n')[0].trim();
-       }
-       // Don't truncate icebreaker - let it be natural length
-       // Just ensure it's a single sentence
-       if (cleanIcebreaker.includes('.') && cleanIcebreaker.indexOf('.') < cleanIcebreaker.length - 1) {
-         cleanIcebreaker = cleanIcebreaker.split('.')[0] + '.';
-       }
-      
+
+      // Clean and validate icebreaker (should be a single sentence)
+      let cleanIcebreaker = parsed.icebreaker.trim();
+      if (cleanIcebreaker.includes('\n')) {
+        cleanIcebreaker = cleanIcebreaker.split('\n')[0].trim();
+      }
+      // Don't truncate icebreaker - let it be natural length
+      // Just ensure it's a single sentence
+      if (cleanIcebreaker.includes('.') && cleanIcebreaker.indexOf('.') < cleanIcebreaker.length - 1) {
+        cleanIcebreaker = cleanIcebreaker.split('.')[0] + '.';
+      }
+
       this.logger.log('Successfully parsed email content from Gemini');
-      
+
       return {
         subjectLines: parsed.subjectLines,
         emailBody: parsed.emailBody,
         icebreaker: cleanIcebreaker,
         rationale: parsed.rationale
       };
-      
+
     } catch (error) {
       this.logger.error('Failed to parse email response:', error);
       this.logger.debug('Raw response that failed to parse:', responseText);
-      
+
       // Fallback content
       return {
         subjectLines: [
@@ -434,7 +434,7 @@ Best regards,
    */
   async getEmailDraft(draftId: number): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
-    
+
     const draft = await scrapingClient.emailDraft.findUnique({
       where: { id: draftId },
       include: {
@@ -482,7 +482,7 @@ Best regards,
     productsRelevant?: string;
   }): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
-    
+
     const updatedDraft = await scrapingClient.emailDraft.update({
       where: { id: draftId },
       data: {
@@ -500,7 +500,7 @@ Best regards,
    */
   async getContactEmailDrafts(contactId: number): Promise<any[]> {
     const scrapingClient = await this.prisma.getScrapingClient();
-    
+
     return await scrapingClient.emailDraft.findMany({
       where: { contactId },
       include: {
