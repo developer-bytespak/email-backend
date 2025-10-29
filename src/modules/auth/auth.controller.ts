@@ -44,6 +44,7 @@ export class AuthController {
     return {
       message: 'Login successful',
       client: result.client,
+      access_token: result.access_token, // Include token for testing purposes
     };
   }
 
