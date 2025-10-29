@@ -146,7 +146,8 @@ export class ScrapingService {
   }
 
   /**
-   * Scrape multiple contacts in batch
+   * Scrape multiple contacts in batch with parallel processing
+   * Optimized: Uses controlled concurrency instead of sequential processing
    */
   async scrapeBatch(uploadId: number, limit: number = 20): Promise<BatchScrapeResult> {
     // Get CSV upload to verify it exists
@@ -179,32 +180,46 @@ export class ScrapingService {
       };
     }
 
-    // Scrape each contact
+    // Process contacts in parallel with controlled concurrency
+    const concurrency = Math.min(5, contacts.length); // Max 5 concurrent operations
     const results: ScrapeResult[] = [];
     let successful = 0;
     let failed = 0;
 
-    for (const contact of contacts) {
-      try {
-        const result = await this.scrapeContact(contact.id);
-        results.push(result);
+    // Process contacts in chunks to control concurrency
+    for (let i = 0; i < contacts.length; i += concurrency) {
+      const chunk = contacts.slice(i, i + concurrency);
+      
+      // Process chunk in parallel
+      const chunkPromises = chunk.map(async (contact) => {
+        try {
+          const result = await this.scrapeContact(contact.id);
+          return result;
+        } catch (error) {
+          return {
+            contactId: contact.id,
+            success: false,
+            error: error.message || 'Unknown error',
+          };
+        }
+      });
 
+      const chunkResults = await Promise.all(chunkPromises);
+      
+      // Process results
+      chunkResults.forEach(result => {
+        results.push(result);
         if (result.success) {
           successful++;
         } else {
           failed++;
         }
-      } catch (error) {
-        results.push({
-          contactId: contact.id,
-          success: false,
-          error: error.message || 'Unknown error',
-        });
-        failed++;
-      }
+      });
 
-      // Add small delay between requests to avoid overwhelming servers
-      await this.sleep(1000); // 1 second delay
+      // Add delay between chunks to avoid overwhelming servers
+      if (i + concurrency < contacts.length) {
+        await this.sleep(2000); // 2 second delay between chunks
+      }
     }
 
     return {
