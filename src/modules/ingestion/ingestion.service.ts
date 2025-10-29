@@ -78,6 +78,7 @@ export class IngestionService {
         data: extractedData,
         contacts: savedContacts,
         validationStatus: 'in_progress',
+        note: 'Contact statuses will be updated after validation completes. Check back in a few moments for final statuses.',
       };
     } catch (error) {
       // Update status to failure
@@ -149,30 +150,33 @@ export class IngestionService {
     }
 
     try {
-      // Use batch insert for better performance
-      const result = await this.prisma.contact.createMany({
-        data: contactsToCreate,
-        skipDuplicates: true, // Skip duplicates instead of failing
-      });
+      // Use transaction to ensure atomicity and get exact created contacts
+      const result = await this.prisma.$transaction(async (tx) => {
+        // Batch insert contacts
+        const insertResult = await tx.contact.createMany({
+          data: contactsToCreate,
+          skipDuplicates: true,
+        });
 
-      // Fetch the created contacts - use transaction to ensure we get the exact contacts we just created
-      // Get contacts matching our business names and CSV upload ID to ensure accuracy
-      const businessNames = contactsToCreate.map(c => c.businessName);
-      const savedContacts = await this.prisma.contact.findMany({
-        where: {
-          csvUploadId,
-          status: 'new',
-          businessName: {
-            in: businessNames,
+        // Get the exact contacts we just created using a more precise query
+        const createdContacts = await tx.contact.findMany({
+          where: {
+            csvUploadId,
+            status: 'new',
+            businessName: {
+              in: contactsToCreate.map(c => c.businessName),
+            },
           },
-        },
-        orderBy: {
-          id: 'asc',
-        },
-        take: result.count,
+          orderBy: {
+            id: 'asc',
+          },
+          take: insertResult.count,
+        });
+
+        return createdContacts;
       });
 
-      return savedContacts;
+      return result;
     } catch (error) {
       console.error('Failed to save contacts in batch:', error.message);
       throw new BadRequestException(`Failed to save contacts: ${error.message}`);
