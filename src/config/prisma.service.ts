@@ -37,7 +37,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       transactionOptions: {
         maxWait: 10000, // 10 seconds
         timeout: 30000, // 30 seconds
-        },
+      },
     });
 
     // Log queries in development
