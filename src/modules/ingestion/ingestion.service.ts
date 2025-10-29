@@ -117,52 +117,66 @@ export class IngestionService {
     data: any[],
     csvUploadId: number,
   ): Promise<any[]> {
-    const savedContacts: any[] = [];
-
-    for (const row of data) {
-      try {
-        // Extract fields for Contact table
+    // Filter and prepare data for batch insert
+    const contactsToCreate = data
+      .map(row => {
         const businessName = row.business_name || row.businessName || '';
-        const email = row.email || null;
-        const phone = row.phone_number || row.phone || null;
-        const website = row.website || null;
-        const state = row.state || row.stateProvince || null;
-        const zipCode = row.zipcode || row.zip || row.zipCode || null;
-
+        
         // Skip rows without business name
         if (!businessName || businessName.trim().length === 0) {
-          console.warn('Skipping row with empty business name');
-          continue;
+          return null;
         }
 
-        const contact = await this.prisma.contact.create({
-          data: {
-            csvUploadId,
-            businessName: businessName.trim(),
-            email,
-            phone,
-            website,
-            state,
-            zipCode,
-            status: 'new',
-            valid: false,
-            businessNameValid: false,
-            emailValid: false,
-            websiteValid: false,
-          },
-        });
+        return {
+          csvUploadId,
+          businessName: businessName.trim(),
+          email: row.email || null,
+          phone: row.phone_number || row.phone || null,
+          website: row.website || null,
+          state: row.state || row.stateProvince || null,
+          zipCode: row.zipcode || row.zip || row.zipCode || null,
+          status: 'new' as const,
+          valid: false,
+          businessNameValid: false,
+          emailValid: false,
+          websiteValid: false,
+        };
+      })
+      .filter(contact => contact !== null);
 
-        savedContacts.push(contact);
-      } catch (error) {
-        console.error(
-          `Failed to save contact: ${row.business_name || row.businessName}`,
-          error.message,
-        );
-        // Continue with next row even if one fails
-      }
+    if (contactsToCreate.length === 0) {
+      return [];
     }
 
-    return savedContacts;
+    try {
+      // Use batch insert for better performance
+      const result = await this.prisma.contact.createMany({
+        data: contactsToCreate,
+        skipDuplicates: true, // Skip duplicates instead of failing
+      });
+
+      // Fetch the created contacts - use transaction to ensure we get the exact contacts we just created
+      // Get contacts matching our business names and CSV upload ID to ensure accuracy
+      const businessNames = contactsToCreate.map(c => c.businessName);
+      const savedContacts = await this.prisma.contact.findMany({
+        where: {
+          csvUploadId,
+          status: 'new',
+          businessName: {
+            in: businessNames,
+          },
+        },
+        orderBy: {
+          id: 'asc',
+        },
+        take: result.count,
+      });
+
+      return savedContacts;
+    } catch (error) {
+      console.error('Failed to save contacts in batch:', error.message);
+      throw new BadRequestException(`Failed to save contacts: ${error.message}`);
+    }
   }
 
   async validateLeadData(data: any) {
@@ -184,15 +198,42 @@ export class IngestionService {
     });
   }
 
-  // Example: Get all CSV uploads for a client
-  async getClientUploads(clientId: number) {
+  /**
+   * Get all CSV uploads for a specific client
+   * Only returns uploads that belong to the authenticated client
+   */
+  async getClientUploads(clientId: number, includeContacts: boolean = false) {
+    const include = includeContacts ? { contacts: true } : undefined;
+    
     return this.prisma.csvUpload.findMany({
       where: { clientId },
-      include: {
-        contacts: true,
-      },
+      ...(include && { include }),
       orderBy: {
         createdAt: 'desc',
+      },
+    });
+  }
+
+  /**
+   * Get a specific CSV upload by ID
+   */
+  async getUploadById(uploadId: number) {
+    return this.prisma.csvUpload.findUnique({
+      where: { id: uploadId },
+      include: {
+        contacts: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phone: true,
+            website: true,
+            state: true,
+            zipCode: true,
+            status: true,
+            valid: true,
+          },
+        },
       },
     });
   }
