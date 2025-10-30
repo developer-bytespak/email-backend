@@ -234,11 +234,23 @@ export class ScrapingService {
    * Get scraping statistics for an upload
    */
   async getUploadStats(uploadId: number) {
-    const contacts = await this.prisma.contact.groupBy({
-      by: ['status'],
-      where: { csvUploadId: uploadId },
-      _count: true,
-    });
+    let contacts: Array<any>;
+    try {
+      // Prefer session-pooled client to avoid PgBouncer prepared statement issues
+      const scrapingClient = await this.prisma.getScrapingClient();
+      contacts = await scrapingClient.contact.groupBy({
+        by: ['status'],
+        where: { csvUploadId: uploadId },
+        _count: { _all: true },
+      } as any);
+    } catch (error: any) {
+      // Fallback to pooled client if direct session is unreachable (e.g., P1001) or other connection hiccups
+      contacts = await this.prisma.contact.groupBy({
+        by: ['status'],
+        where: { csvUploadId: uploadId },
+        _count: { _all: true },
+      } as any);
+    }
 
     const stats = {
       uploadId,
@@ -251,7 +263,7 @@ export class ScrapingService {
     };
 
     contacts.forEach((group) => {
-      const count = group._count;
+      const count = typeof (group as any)._count === 'number' ? (group as any)._count : (group as any)._count?._all ?? 0;
       stats.totalContacts += count;
       stats.byStatus[group.status] = count;
 
