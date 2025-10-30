@@ -94,16 +94,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async getScrapingClient(): Promise<PrismaClient> {
     if (!this.scrapingClient) {
-      // Build a true direct (session) URL, even if env points at pooler
-      const rawUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || '';
-      if (!rawUrl) {
-        throw new Error('DIRECT_URL or DATABASE_URL not configured');
+      // Use pooled connection to avoid environments blocking port 5432
+      const databaseUrl = process.env.DATABASE_URL || '';
+      if (!databaseUrl) {
+        throw new Error('DATABASE_URL not configured');
       }
 
-      const normalized = this.normalizeDirectSessionUrl(rawUrl);
-      const modifiedScrapingUrl = normalized.includes('?')
-        ? `${normalized}&prepared_statements=false`
-        : `${normalized}?prepared_statements=false`;
+      // Ensure pooler flags and disable prepared statements for compatibility
+      const pooledUrl = databaseUrl.includes('?')
+        ? `${databaseUrl}&pgbouncer=true&prepared_statements=false&connection_limit=5&pool_timeout=20`
+        : `${databaseUrl}?pgbouncer=true&prepared_statements=false&connection_limit=5&pool_timeout=20`;
 
       this.scrapingClient = new PrismaClient({
         log: [
@@ -114,7 +114,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ],
         errorFormat: 'pretty',
         datasources: {
-          db: { url: modifiedScrapingUrl },
+          db: { url: pooledUrl },
         },
       });
 
@@ -135,7 +135,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         this.scrapingClient = null;
         throw lastErr || new Error('Failed to connect scraping client');
       }
-      this.logger.log('🔗 Scraping client connected to direct session (5432)');
+      this.logger.log('🔗 Scraping client connected via pooler (6543) with prepared_statements=false');
     }
     
     return this.scrapingClient;
