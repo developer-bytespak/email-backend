@@ -94,12 +94,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   async getScrapingClient(): Promise<PrismaClient> {
     if (!this.scrapingClient) {
-      // Use DIRECT_URL for scraping client (session pool)
-      const directUrl = process.env.DIRECT_URL;
-      const modifiedScrapingUrl = directUrl?.includes('?') 
-        ? `${directUrl}&prepared_statements=false`
-        : `${directUrl}?prepared_statements=false`;
-      
+      // Build a true direct (session) URL, even if env points at pooler
+      const rawUrl = process.env.DIRECT_URL || process.env.DATABASE_URL || '';
+      if (!rawUrl) {
+        throw new Error('DIRECT_URL or DATABASE_URL not configured');
+      }
+
+      const normalized = this.normalizeDirectSessionUrl(rawUrl);
+      const modifiedScrapingUrl = normalized.includes('?')
+        ? `${normalized}&prepared_statements=false`
+        : `${normalized}?prepared_statements=false`;
+
       this.scrapingClient = new PrismaClient({
         log: [
           { emit: 'event', level: 'query' },
@@ -109,18 +114,67 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         ],
         errorFormat: 'pretty',
         datasources: {
-          db: {
-            url: modifiedScrapingUrl,
-          },
+          db: { url: modifiedScrapingUrl },
         },
       });
 
-      // Connect the scraping client
-      await this.scrapingClient.$connect();
-      this.logger.log('🔗 Scraping client connected to session pool (DIRECT_URL)');
+      // Robust connect with brief retry for transient P1001
+      let connected = false;
+      let lastErr: any;
+      for (let i = 1; i <= 3; i++) {
+        try {
+          await this.scrapingClient.$connect();
+          connected = true;
+          break;
+        } catch (err: any) {
+          lastErr = err;
+          await new Promise((r) => setTimeout(r, 500 * i));
+        }
+      }
+      if (!connected) {
+        this.scrapingClient = null;
+        throw lastErr || new Error('Failed to connect scraping client');
+      }
+      this.logger.log('🔗 Scraping client connected to direct session (5432)');
     }
     
     return this.scrapingClient;
+  }
+
+  /**
+   * Normalize a connection string to a true direct Postgres session (no pooler, port 5432, ssl required)
+   */
+  private normalizeDirectSessionUrl(url: string): string {
+    try {
+      // Handle both postgres:// and postgresql://
+      const u = new URL(url);
+      // If pointing to pooler host, convert to direct host
+      if (u.hostname.includes('.pooler.')) {
+        u.hostname = u.hostname.replace('.pooler.', '.');
+      }
+      // Supabase direct host uses supabase.co (not .com)
+      if (u.hostname.endsWith('supabase.com')) {
+        u.hostname = u.hostname.replace('supabase.com', 'supabase.co');
+      }
+      // Supabase direct hosts typically end with supabase.co
+      // Ensure port 5432 for direct session
+      u.port = '5432';
+
+      // Ensure sslmode=require in query
+      const params = u.searchParams;
+      if (!params.has('sslmode')) params.set('sslmode', 'require');
+      u.search = params.toString();
+
+      return u.toString();
+    } catch {
+      // Fallback: simple string replacements
+      let out = url.replace('.pooler.supabase.com', '.supabase.co');
+      out = out.replace(':6543', ':5432').replace(':6432', ':5432');
+      if (!out.includes('sslmode=')) {
+        out += (out.includes('?') ? '&' : '?') + 'sslmode=require';
+      }
+      return out;
+    }
   }
 
   /**
