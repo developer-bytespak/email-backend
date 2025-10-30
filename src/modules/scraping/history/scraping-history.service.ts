@@ -23,7 +23,13 @@ export class ScrapingHistoryService {
     clientId: number,
     query: ScrapingHistoryQueryDto,
   ): Promise<ScrapingHistoryResponseDto> {
-    const scrapingClient = await this.prisma.getScrapingClient();
+    // Prefer session-pooled client; fallback to pooled on connection errors
+    let client: any;
+    try {
+      client = await this.prisma.getScrapingClient();
+    } catch (e) {
+      client = this.prisma;
+    }
     
     const {
       status = 'all',
@@ -86,13 +92,13 @@ export class ScrapingHistoryService {
     }
 
     // Get total count
-    const totalCount = await scrapingClient.scrapedData.count({
+    const totalCount = await client.scrapedData.count({
       where: whereClause,
     });
 
     // Get paginated results
     const skip = (page - 1) * limit;
-    const scrapedData = await scrapingClient.scrapedData.findMany({
+    const scrapedData = await client.scrapedData.findMany({
       where: whereClause,
       orderBy,
       skip,
@@ -134,11 +140,11 @@ export class ScrapingHistoryService {
     });
 
     // Get success/failure counts
-    const successfulCount = await scrapingClient.scrapedData.count({
+    const successfulCount = await client.scrapedData.count({
       where: { ...whereClause, scrapeSuccess: true },
     });
 
-    const failedCount = await scrapingClient.scrapedData.count({
+    const failedCount = await client.scrapedData.count({
       where: { ...whereClause, scrapeSuccess: false },
     });
 
@@ -160,10 +166,15 @@ export class ScrapingHistoryService {
    * Get scraping history for a specific upload
    */
   async getUploadScrapingHistory(uploadId: number): Promise<UploadHistoryResponseDto> {
-    const scrapingClient = await this.prisma.getScrapingClient();
+    let client: any;
+    try {
+      client = await this.prisma.getScrapingClient();
+    } catch (e) {
+      client = this.prisma;
+    }
 
     // Get upload details
-    const upload = await scrapingClient.csvUpload.findUnique({
+    const upload = await client.csvUpload.findUnique({
       where: { id: uploadId },
       select: {
         id: true,
@@ -177,7 +188,7 @@ export class ScrapingHistoryService {
     }
 
     // Get all scraping data for this upload
-    const scrapedData = await scrapingClient.scrapedData.findMany({
+    const scrapedData = await client.scrapedData.findMany({
       where: {
         contact: {
           csvUploadId: uploadId,
@@ -245,10 +256,15 @@ export class ScrapingHistoryService {
    * Get detailed scraping history for a specific contact
    */
   async getContactScrapingHistory(contactId: number): Promise<ContactHistoryResponseDto> {
-    const scrapingClient = await this.prisma.getScrapingClient();
+    let client: any;
+    try {
+      client = await this.prisma.getScrapingClient();
+    } catch (e) {
+      client = this.prisma;
+    }
 
     // Get contact details
-    const contact = await scrapingClient.contact.findUnique({
+    const contact = await client.contact.findUnique({
       where: { id: contactId },
       select: {
         id: true,
@@ -262,7 +278,7 @@ export class ScrapingHistoryService {
     }
 
     // Get all scraping attempts for this contact
-    const scrapedData = await scrapingClient.scrapedData.findMany({
+    const scrapedData = await client.scrapedData.findMany({
       where: { contactId },
       orderBy: {
         scrapedAt: 'desc',

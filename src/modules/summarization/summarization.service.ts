@@ -161,21 +161,36 @@ export class SummarizationService {
    * Get summary for a contact
    */
   async getContactSummary(contactId: number): Promise<any> {
-    const scrapingClient = await this.prisma.getScrapingClient();
-    
-    return await scrapingClient.summary.findFirst({
-      where: { contactId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        scrapedData: {
-          select: {
-            url: true,
-            scrapedAt: true,
-            scrapeSuccess: true
+    try {
+      const scrapingClient = await this.prisma.getScrapingClient();
+      return await scrapingClient.summary.findFirst({
+        where: { contactId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          scrapedData: {
+            select: {
+              url: true,
+              scrapedAt: true,
+              scrapeSuccess: true
+            }
           }
         }
-      }
-    });
+      });
+    } catch (e) {
+      return await this.prisma.summary.findFirst({
+        where: { contactId },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          scrapedData: {
+            select: {
+              url: true,
+              scrapedAt: true,
+              scrapeSuccess: true
+            }
+          }
+        }
+      });
+    }
   }
 
   /**
