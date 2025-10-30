@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, ParseIntPipe, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, ParseIntPipe, HttpException, HttpStatus, Patch } from '@nestjs/common';
 import { SmsService } from './sms.service';
 
 @Controller('sms')
@@ -70,6 +70,31 @@ export class SmsController {
     } catch (error) {
       throw new HttpException(
         error.message || 'Failed to retrieve SMS draft',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Edit an existing SMS draft (partial update)
+   * PATCH /sms/draft/:smsDraftId
+   * Body: { messageText?: string }
+   */
+  @Patch('draft/:smsDraftId')
+  async updateSmsDraft(
+    @Param('smsDraftId', ParseIntPipe) smsDraftId: number,
+    @Body() body: any,
+  ) {
+    try {
+      const updated = await this.smsService.updateSmsDraft(smsDraftId, body);
+      return {
+        message: 'SMS draft updated successfully',
+        success: true,
+        data: updated,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to update SMS draft',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
