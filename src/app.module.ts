@@ -9,6 +9,7 @@ import { ScrapingModule } from './modules/scraping/scraping.module';
 import { SummarizationModule } from './modules/summarization/summarization.module';
 import { SmsModule } from './modules/sms/sms.module';
 import { EmailsModule } from './modules/emails/emails.module';
+import { SmsTwilioModule } from './modules/sms/twilio/sms.twilio.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { EmailsModule } from './modules/emails/emails.module';
     SummarizationModule,
     SmsModule,
     EmailsModule,
+    SmsTwilioModule,
   ],
   controllers: [AppController],
   providers: [AppService],

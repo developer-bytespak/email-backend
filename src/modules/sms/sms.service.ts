@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { LlmClientService } from '../summarization/llm-client/llm-client.service';
+import { TwilioService } from './twilio/twilio.service';
 
 @Injectable()
 export class SmsService {
@@ -9,6 +10,7 @@ export class SmsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llmClient: LlmClientService,
+    private readonly twilioService: TwilioService,
   ) {}
 
   /**
@@ -17,7 +19,7 @@ export class SmsService {
   async generateSmsDraft(contactId: number, summaryId: number): Promise<any> {
     try {
       // Get scraping client to avoid prepared statement conflicts
-      const scrapingClient = await this.prisma.getScrapingClient();
+      const scrapingClient = await this.prisma;
       
       // Get contact and summary data
       const contact = await scrapingClient.contact.findUnique({
@@ -170,7 +172,7 @@ Only return the final SMS text (no labels, no explanations).
    * Get SMS drafts for a contact
    */
   async getSmsDrafts(contactId: number): Promise<any[]> {
-    const scrapingClient = await this.prisma.getScrapingClient();
+    const scrapingClient = await this.prisma;
     
     return await scrapingClient.smsDraft.findMany({
       where: { contactId },
@@ -191,7 +193,7 @@ Only return the final SMS text (no labels, no explanations).
    * Get a specific SMS draft
    */
   async getSmsDraft(smsDraftId: number): Promise<any> {
-    const scrapingClient = await this.prisma.getScrapingClient();
+    const scrapingClient = await this.prisma;
     
     const smsDraft = await scrapingClient.smsDraft.findUnique({
       where: { id: smsDraftId },
@@ -243,5 +245,81 @@ Only return the final SMS text (no labels, no explanations).
       id,
       status: 'delivered',
     };
+  }
+
+  /**
+   * Send an existing SMS draft via Twilio and create a log
+   */
+  async sendDraft(smsDraftId: number, overrideTo?: string) {
+    // Use main pooled client to avoid DIRECT_URL issues
+    const db = this.prisma;
+
+    const draft = await db.smsDraft.findUnique({
+      where: { id: smsDraftId },
+      include: {
+        contact: { select: { id: true, phone: true } },
+      },
+    });
+
+    if (!draft) throw new NotFoundException(`SMS draft with ID ${smsDraftId} not found`);
+
+    const chosenTo = overrideTo || process.env.SMS_TEST_TO || draft.contact?.phone;
+    if (!chosenTo) throw new BadRequestException('Recipient phone number is missing');
+
+    const statusCallback = process.env.SMS_STATUS_CALLBACK_URL; // optional
+
+    const twilioResp = await this.twilioService.sendSms({
+      to: chosenTo,
+      body: draft.messageText,
+      statusCallback,
+    });
+
+    const log = await db.smsLog.create({
+      data: {
+        smsDraftId: draft.id,
+        contactId: draft.contactId,
+        status: twilioResp.errorCode ? 'failed' : 'success',
+        providerResponse: twilioResp as any,
+        sentAt: new Date(),
+      },
+    });
+
+    // Optionally mark draft as sent
+    try {
+      await db.smsDraft.update({
+        where: { id: draft.id },
+        data: { status: 'sent' },
+      });
+    } catch (e) {
+      this.logger.warn('Failed to update draft status to sent');
+    }
+
+    return { twilio: twilioResp, log };
+  }
+
+  /**
+   * Update an SMS draft (only while status is 'draft')
+   */
+  async updateSmsDraft(smsDraftId: number, updates: { messageText?: string }) {
+    const db = this.prisma;
+
+    const draft = await db.smsDraft.findUnique({ where: { id: smsDraftId } });
+    if (!draft) throw new NotFoundException(`SMS draft with ID ${smsDraftId} not found`);
+    if (draft.status !== 'draft') throw new BadRequestException('Only drafts with status "draft" can be edited');
+
+    const data: any = {};
+    if (typeof updates.messageText === 'string') {
+      const trimmed = updates.messageText.trim().replace(/^\s+|\s+$/g, '');
+      if (trimmed.length === 0) throw new BadRequestException('messageText cannot be empty');
+      if (trimmed.length > 160) throw new BadRequestException('messageText must be 160 characters or less');
+      data.messageText = trimmed;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return draft; // nothing to update
+    }
+
+    const updated = await db.smsDraft.update({ where: { id: smsDraftId }, data });
+    return updated;
   }
 }
