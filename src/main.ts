@@ -11,12 +11,18 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
   // Enable CORS for frontend
+  const allowedOrigins = [
+    'http://localhost:3001',
+    'https://email-backend-izs4.onrender.com',
+    process.env.FRONTEND_URL,
+  ].filter(Boolean);
+  
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-    optionsSuccessStatus: 200, // Some legacy browsers (IE11, various SmartTVs) choke on 204
+    optionsSuccessStatus: 200,
   });
   
   // Enable cookie parsing
