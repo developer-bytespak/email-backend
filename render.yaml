@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: email-backend
+    runtime: node
+    buildCommand: npm install && npm run build && npx prisma migrate deploy
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # Note: PORT is automatically set by Render, no need to specify
+    # Add these environment variables in Render dashboard:
+    # - DATABASE_URL (your PostgreSQL connection string)
+    # - DIRECT_URL (direct PostgreSQL connection for migrations)
+    # - JWT_SECRET (your secret key for JWT tokens)
+    # - FRONTEND_URL (your frontend URL for CORS)
+
