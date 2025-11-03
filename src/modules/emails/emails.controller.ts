@@ -40,14 +40,6 @@ export class EmailsController {
   }
 
   /**
-   * Create a campaign with AI-generated email drafts
-   */
-  @Post('campaign')
-  async createCampaign(@Body() campaignData: CreateCampaignDto) {
-    return this.emailsService.createCampaign(campaignData);
-  }
-
-  /**
    * Get available email templates
    */
   @Get('templates')
@@ -55,13 +47,22 @@ export class EmailsController {
     return this.emailsService.getTemplates();
   }
 
-  /**
-   * Get campaign details
-   */
-  @Get('campaigns/:id')
-  async getCampaign(@Param('id') id: string) {
-    return this.emailsService.getCampaign(id);
-  }
+  // COMMENTED OUT - Campaign management deferred to Phase 2
+  // /**
+  //  * Create a campaign with AI-generated email drafts
+  //  */
+  // @Post('campaign')
+  // async createCampaign(@Body() campaignData: CreateCampaignDto) {
+  //   return this.emailsService.createCampaign(campaignData);
+  // }
+
+  // /**
+  //  * Get campaign details
+  //  */
+  // @Get('campaigns/:id')
+  // async getCampaign(@Param('id') id: string) {
+  //   return this.emailsService.getCampaign(id);
+  // }
 
   /**
    * Get email analytics
