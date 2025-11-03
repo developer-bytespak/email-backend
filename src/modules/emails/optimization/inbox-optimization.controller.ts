@@ -153,23 +153,5 @@ export class InboxOptimizationController {
     };
   }
 
-  /**
-   * Get DKIM/SPF authentication status
-   * GET /emails/optimization/auth/:clientEmailId
-   */
-  @Get('auth/:clientEmailId')
-  async getAuthStatus(@Param('clientEmailId', ParseIntPipe) clientEmailId: number) {
-    try {
-      const status = await this.optimizationService.validateAuthentication(clientEmailId);
-      
-      return {
-        success: true,
-        message: 'Authentication status retrieved',
-        data: status,
-      };
-    } catch (error) {
-      throw new BadRequestException(error.message || 'Failed to get authentication status');
-    }
-  }
 }
 

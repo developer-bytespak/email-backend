@@ -222,9 +222,6 @@ model ClientEmail {
 
   // NEW FIELDS:
   sendgridApiKey String? // Encrypted SendGrid API key (per email account)
-  dkimVerified   Boolean @default(false) // DKIM = DomainKeys Identified Mail
-  spfVerified    Boolean @default(false) // SPF = Sender Policy Framework
-  domainVerified Boolean @default(false) // Domain ownership verified
 
   client     Client       @relation(fields: [clientId], references: [id])
   EmailDraft EmailDraft[]

@@ -84,14 +84,6 @@ curl -X POST http://localhost:3000/emails/optimization/suggest \
 }
 ```
 
-### 1.3 Get DKIM/SPF (DomainKeys Identified Mail/Sender Policy Framework) Status
-**GET** `/emails/optimization/auth/:clientEmailId`
-
-```bash
-curl -X GET http://localhost:3000/emails/optimization/auth/1 \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-```
-
 ---
 
 ## 2. Email Tracking APIs

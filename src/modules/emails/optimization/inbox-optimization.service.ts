@@ -308,33 +308,5 @@ Return ONLY valid JSON, no markdown formatting.`;
     };
   }
 
-  /**
-   * Validate DKIM/SPF authentication status
-   */
-  async validateAuthentication(clientEmailId: number): Promise<{
-    dkimVerified: boolean;
-    spfVerified: boolean;
-    domainVerified: boolean;
-  }> {
-    const scrapingClient = await this.prisma.getScrapingClient();
-    const clientEmail = await scrapingClient.clientEmail.findUnique({
-      where: { id: clientEmailId },
-      select: {
-        dkimVerified: true,
-        spfVerified: true,
-        domainVerified: true,
-      },
-    });
-
-    if (!clientEmail) {
-      throw new Error(`ClientEmail with ID ${clientEmailId} not found`);
-    }
-
-    return {
-      dkimVerified: clientEmail.dkimVerified || false,
-      spfVerified: clientEmail.spfVerified || false,
-      domainVerified: clientEmail.domainVerified || false,
-    };
-  }
 }
 
