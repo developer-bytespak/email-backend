@@ -95,6 +95,123 @@ export class UnsubscribeService {
   }
 
   /**
+   * Get unsubscribe history for a contact by token
+   */
+  async getUnsubscribeHistory(token: string): Promise<{
+    contactId: number;
+    contactEmail: string;
+    isUnsubscribed: boolean;
+    unsubscribeRecord?: {
+      id: number;
+      unsubscribedAt: Date;
+      reason: string | null;
+    };
+  }> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    // Find EmailLog by token to get contactId
+    const emailLog = await scrapingClient.emailLog.findFirst({
+      where: {
+        OR: [
+          { trackingPixelToken: token },
+        ],
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    if (!emailLog) {
+      throw new NotFoundException('Invalid token');
+    }
+
+    const contactId = emailLog.contactId;
+    const contactEmail = emailLog.contact.email || 'Unknown';
+
+    // Check if unsubscribed
+    const unsubscribeRecord = await scrapingClient.emailUnsubscribe.findUnique({
+      where: { contactId },
+      select: {
+        id: true,
+        unsubscribedAt: true,
+        reason: true,
+      },
+    });
+
+    return {
+      contactId,
+      contactEmail,
+      isUnsubscribed: !!unsubscribeRecord,
+      unsubscribeRecord: unsubscribeRecord || undefined,
+    };
+  }
+
+  /**
+   * Resubscribe contact (remove from unsubscribe list)
+   */
+  async resubscribe(token: string): Promise<{
+    success: boolean;
+    contactId: number;
+    message: string;
+  }> {
+    try {
+      const scrapingClient = await this.prisma.getScrapingClient();
+      
+      // Find EmailLog by token to get contactId
+      const emailLog = await scrapingClient.emailLog.findFirst({
+        where: {
+          OR: [
+            { trackingPixelToken: token },
+          ],
+        },
+        include: {
+          contact: true,
+        },
+      });
+
+      if (!emailLog) {
+        throw new NotFoundException('Invalid token');
+      }
+
+      const contactId = emailLog.contactId;
+
+      // Check if unsubscribed
+      const unsubscribeRecord = await scrapingClient.emailUnsubscribe.findUnique({
+        where: { contactId },
+      });
+
+      if (!unsubscribeRecord) {
+        return {
+          success: true,
+          contactId,
+          message: 'You are already subscribed to our emails.',
+        };
+      }
+
+      // Delete unsubscribe record
+      await scrapingClient.emailUnsubscribe.delete({
+        where: { contactId },
+      });
+
+      this.logger.log(`✅ Contact ${contactId} resubscribed`);
+
+      return {
+        success: true,
+        contactId,
+        message: 'You have been successfully resubscribed. You will receive emails again.',
+      };
+    } catch (error) {
+      this.logger.error(`Failed to resubscribe for token ${token}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Inject unsubscribe link into email body
    */
   injectUnsubscribeLink(html: string, token: string, baseUrl: string): string {
