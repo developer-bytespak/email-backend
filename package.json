@@ -29,6 +29,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@prisma/client": "^6.18.0",
+    "@sendgrid/mail": "^8.1.6",
     "@types/bcryptjs": "^2.4.6",
     "axios": "^1.12.2",
     "bcryptjs": "^3.0.2",

@@ -83,6 +83,10 @@ model Contact {
   smsDrafts   SmsDraft[]
   emailLogs   EmailLog[]
   smsLogs     SmsLog[]
+
+  // NEW RELATIONS:
+  emailEngagements EmailEngagement[]
+  emailUnsubscribe EmailUnsubscribe?
 }
 
 enum ContactStatus {
@@ -139,6 +143,7 @@ model EmailDraft {
   contact          Contact          @relation(fields: [contactId], references: [id])
   summary          Summary          @relation(fields: [summaryId], references: [id])
   EmailLog         EmailLog[]
+  EmailQueue       EmailQueue?
   Client           Client?          @relation(fields: [clientId], references: [id])
   clientId         Int?
 }
@@ -156,16 +161,33 @@ model EmailLog {
   status           EmailLogStatus
   providerResponse Json?
   sentAt           DateTime
-  emailDraft       EmailDraft     @relation(fields: [emailDraftId], references: [id])
-  contact          Contact        @relation(fields: [contactId], references: [id])
-  Client           Client?        @relation(fields: [clientId], references: [id])
-  clientId         Int?
+
+  // NEW FIELDS:
+  messageId          String?   @unique // SendGrid message ID
+  trackingPixelToken String?   @unique // Token for custom pixel (backup)
+  sentVia            String    @default("sendgrid")
+  deliveredAt        DateTime?
+  spamScore          Int? // Pre-send score (0-100)
+
+  emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id])
+  contact    Contact    @relation(fields: [contactId], references: [id])
+  Client     Client?    @relation(fields: [clientId], references: [id])
+  clientId   Int?
+
+  // NEW RELATIONS:
+  emailEngagements  EmailEngagement[]
+  emailUnsubscribes EmailUnsubscribe[]
 }
 
 enum EmailLogStatus {
   success
   failed
   bounced
+  pending // NEW
+  delivered // NEW
+  blocked // NEW
+  dropped // NEW
+  spamreport // NEW
 }
 
 model ProductService {
@@ -197,8 +219,15 @@ model ClientEmail {
   limit            Int               @default(500)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @default(now()) @updatedAt
-  client           Client            @relation(fields: [clientId], references: [id])
-  EmailDraft       EmailDraft[]
+
+  // NEW FIELDS:
+  sendgridApiKey String? // Encrypted SendGrid API key (per email account)
+  dkimVerified   Boolean @default(false) // DKIM = DomainKeys Identified Mail
+  spfVerified    Boolean @default(false) // SPF = Sender Policy Framework
+  domainVerified Boolean @default(false) // Domain ownership verified
+
+  client     Client       @relation(fields: [clientId], references: [id])
+  EmailDraft EmailDraft[]
 }
 
 enum ClientEmailStatus {
@@ -285,4 +314,64 @@ model ScrapedData {
   // Relations
   contact   Contact   @relation(fields: [contactId], references: [id])
   summaries Summary[]
+}
+
+// ==========================================
+// NEW TABLES FOR EMAIL AUTOMATION
+// ==========================================
+
+model EmailEngagement {
+  id             Int            @id @default(autoincrement())
+  emailLogId     Int
+  contactId      Int
+  engagementType EngagementType // 'open' OR 'click' - separate records per event
+  engagedAt      DateTime       @default(now())
+  url            String? // Only for clicks - original URL clicked
+
+  emailLog EmailLog @relation(fields: [emailLogId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id])
+
+  @@index([emailLogId])
+  @@index([contactId])
+  @@index([engagementType, engagedAt])
+}
+
+enum EngagementType {
+  open // Created when tracking pixel loads or SendGrid webhook
+  click // Created when link is clicked or SendGrid webhook
+}
+
+model EmailUnsubscribe {
+  id                    Int      @id @default(autoincrement())
+  contactId             Int      @unique // One unsubscribe per contact
+  unsubscribeEmailLogId Int? // Which email triggered unsubscribe
+  unsubscribedAt        DateTime @default(now())
+  reason                String? // Optional reason
+
+  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  emailLog EmailLog? @relation(fields: [unsubscribeEmailLogId], references: [id])
+
+  @@index([contactId])
+}
+
+model EmailQueue {
+  id           Int              @id @default(autoincrement())
+  emailDraftId Int              @unique // One queue entry per draft
+  scheduledAt  DateTime
+  status       EmailQueueStatus @default(pending)
+  retryCount   Int              @default(0)
+  nextRetryAt  DateTime? // When to retry if failed
+  priority     Int              @default(0) // Lower = higher priority (FIFO)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @default(now()) @updatedAt
+
+  emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledAt, priority]) // For FIFO queue queries
+}
+
+enum EmailQueueStatus {
+  pending
+  sent
+  failed
 }
