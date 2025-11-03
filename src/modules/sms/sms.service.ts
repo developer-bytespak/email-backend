@@ -267,12 +267,21 @@ Only return the final SMS text (no labels, no explanations).
     if (!chosenTo) throw new BadRequestException('Recipient phone number is missing');
 
     const statusCallback = process.env.SMS_STATUS_CALLBACK_URL; // optional
+    
+    if (statusCallback) {
+      this.logger.log(`📞 Sending SMS with status callback URL: ${statusCallback}`);
+    } else {
+      this.logger.warn('⚠️ SMS_STATUS_CALLBACK_URL not set - delivery status updates will not be received!');
+    }
 
     const twilioResp = await this.twilioService.sendSms({
       to: chosenTo,
       body: draft.messageText,
       statusCallback,
     });
+    
+    this.logger.log(`✅ SMS sent successfully. MessageSid: ${twilioResp.sid}, Status: ${twilioResp.status}`);
+    this.logger.log(`💾 Storing MessageSid in database: ${twilioResp.sid}`);
 
     const log = await db.smsLog.create({
       data: {
@@ -283,6 +292,10 @@ Only return the final SMS text (no labels, no explanations).
         sentAt: new Date(),
       },
     });
+    
+    // Verify the MessageSid was stored correctly
+    const storedResponse = log.providerResponse as any;
+    this.logger.log(`✅ SMS Log created with ID: ${log.id}, Stored MessageSid: ${storedResponse?.sid}`);
 
     // Optionally mark draft as sent
     try {
@@ -321,5 +334,141 @@ Only return the final SMS text (no labels, no explanations).
 
     const updated = await db.smsDraft.update({ where: { id: smsDraftId }, data });
     return updated;
+  }
+
+  /**
+   * Update SMS log status based on Twilio webhook callback
+   * Maps Twilio statuses to SmsLogStatus enum and updates the database
+   */
+  async updateSmsStatus(
+    messageSid: string,
+    messageStatus: string,
+    errorCode?: string,
+    errorMessage?: string,
+  ) {
+    const db = this.prisma;
+
+    try {
+      this.logger.log(`🔍 Looking for SMS log with MessageSid: ${messageSid}`);
+      
+      // Find the SmsLog by MessageSid stored in providerResponse
+      // Note: Prisma doesn't support direct JSON field filtering in WHERE clause,
+      // so we query recent logs and filter in memory
+      // First try: Only query logs that haven't been delivered yet (status: success or failed)
+      let recentLogs = await db.smsLog.findMany({
+        where: {
+          status: {
+            in: ['success', 'failed'], // Only update logs that are still in initial state
+          },
+        },
+        select: {
+          id: true,
+          providerResponse: true,
+          status: true,
+        },
+        orderBy: {
+          sentAt: 'desc',
+        },
+        take: 1000, // Limit to recent 1000 logs for performance
+      });
+
+      // If not found, search ALL recent logs (including delivered/undelivered) - for debugging
+      if (recentLogs.length === 0 || !recentLogs.find(log => {
+        const response = log.providerResponse as any;
+        return response?.sid === messageSid;
+      })) {
+        this.logger.log(`🔍 Not found in pending logs, searching all recent logs...`);
+        recentLogs = await db.smsLog.findMany({
+          select: {
+            id: true,
+            providerResponse: true,
+            status: true,
+          },
+          orderBy: {
+            sentAt: 'desc',
+          },
+          take: 100, // Check last 100 logs regardless of status
+        });
+      }
+
+      this.logger.log(`📋 Found ${recentLogs.length} recent logs to check`);
+
+      // Find the log with matching MessageSid
+      const matchingLog = recentLogs.find((log) => {
+        const response = log.providerResponse as any;
+        const storedSid = response?.sid;
+        
+        // Log for debugging
+        if (storedSid && storedSid === messageSid) {
+          this.logger.log(`✅ Found matching log! Log ID: ${log.id}, Current status: ${log.status}`);
+        }
+        
+        return storedSid === messageSid;
+      });
+
+      if (!matchingLog) {
+        // Log all recent log SIDs for debugging
+        const recentSids = recentLogs.map(log => {
+          const response = log.providerResponse as any;
+          return response?.sid || 'NO_SID';
+        });
+        this.logger.warn(`❌ No SmsLog found with MessageSid: ${messageSid}`);
+        this.logger.warn(`📋 Recent log SIDs: ${recentSids.slice(0, 10).join(', ')}`);
+        this.logger.warn(`🔍 Checked ${recentLogs.length} recent logs`);
+        return;
+      }
+
+      // Map Twilio status to SmsLogStatus enum
+      let newStatus: 'success' | 'failed' | 'delivered' | 'undelivered';
+      
+      switch (messageStatus.toLowerCase()) {
+        case 'delivered':
+          newStatus = 'delivered';
+          break;
+        case 'failed':
+          // Message failed to send (Twilio error)
+          newStatus = 'failed';
+          break;
+        case 'undelivered':
+          // Message sent but not delivered to recipient
+          newStatus = 'undelivered';
+          break;
+        case 'sent':
+        case 'queued':
+        case 'sending':
+          // Keep as 'success' for intermediate states
+          newStatus = 'success';
+          break;
+        default:
+          this.logger.warn(`Unknown Twilio status: ${messageStatus}, keeping current status`);
+          return;
+      }
+
+      // Update providerResponse with latest status info
+      const currentResponse = (matchingLog.providerResponse as any) || {};
+      const updatedResponse = {
+        ...currentResponse,
+        status: messageStatus,
+        ...(errorCode && { errorCode }),
+        ...(errorMessage && { errorMessage }),
+      };
+
+      // Update the log
+      const updated = await db.smsLog.update({
+        where: { id: matchingLog.id },
+        data: {
+          status: newStatus,
+          providerResponse: updatedResponse,
+        },
+      });
+
+      this.logger.log(
+        `✅ Updated SMS log ${matchingLog.id} status: ${matchingLog.status} → ${newStatus} (MessageSid: ${messageSid})`,
+      );
+      this.logger.log(`✅ Database update confirmed. New status: ${updated.status}`);
+    } catch (error) {
+      this.logger.error(`Failed to update SMS status for MessageSid ${messageSid}:`, error);
+      throw error;
+    }
   }
 }
