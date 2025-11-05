@@ -144,4 +144,14 @@ export class EmailGenerationController {
       results,
     };
   }
+
+  /**
+   * Get bulk status for multiple contacts (summary, email draft, SMS draft status)
+   * POST /emails/generation/bulk-status
+   * Body: { contactIds: number[] }
+   */
+  @Post('bulk-status')
+  async getBulkStatus(@Body() body: { contactIds: number[] }) {
+    return await this.emailGenerationService.getBulkStatus(body.contactIds);
+  }
 }
