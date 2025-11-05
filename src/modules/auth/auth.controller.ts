@@ -34,11 +34,15 @@ export class AuthController {
     const result = await this.authService.login(loginDto);
     
     // Set HTTP-only cookie
+    // Use 'none' for cross-origin (Vercel frontend -> Render backend)
+    // secure must be true when sameSite is 'none' (required by browsers)
+    const isProduction = process.env.NODE_ENV === 'production';
     res.cookie('access_token', result.access_token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: isProduction, // Required for sameSite: 'none'
+      sameSite: isProduction ? 'none' : 'lax', // 'none' for cross-origin, 'lax' for local dev
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      path: '/', // Ensure cookie is available for all paths
     });
 
     return {
@@ -52,7 +56,13 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(@Response({ passthrough: true }) res) {
-    res.clearCookie('access_token');
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.clearCookie('access_token', {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      path: '/',
+    });
     return { message: 'Logout successful' };
   }
 
