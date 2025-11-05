@@ -222,6 +222,35 @@ Only return the final SMS text (no labels, no explanations).
     return smsDraft;
   }
 
+  /**
+   * Get all SMS drafts from database
+   */
+  async getAllSmsDrafts(): Promise<any[]> {
+    const scrapingClient = await this.prisma;
+    
+    return await scrapingClient.smsDraft.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            businessName: true,
+            phone: true,
+            email: true,
+          },
+        },
+        summary: {
+          select: {
+            id: true,
+            summaryText: true,
+            painPoints: true,
+            opportunities: true,
+          },
+        },
+      },
+    });
+  }
+
   // Legacy methods (keeping for backward compatibility)
   async sendSms(smsData: any) {
     // TODO: Implement SMS sending logic

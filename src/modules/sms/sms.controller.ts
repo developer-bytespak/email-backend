@@ -31,6 +31,29 @@ export class SmsController {
   }
 
   /**
+   * Get all SMS drafts from database
+   * GET /sms/drafts
+   */
+  @Get('drafts')
+  async getAllSmsDrafts() {
+    try {
+      const drafts = await this.smsService.getAllSmsDrafts();
+      
+      return {
+        message: 'All SMS drafts retrieved successfully',
+        success: true,
+        count: drafts.length,
+        data: drafts,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve SMS drafts',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * Get SMS drafts for a contact
    * GET /sms/drafts/:contactId
    */
