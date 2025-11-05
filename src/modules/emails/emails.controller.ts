@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Param, Query, ParseIntPipe } from '@nestjs/common';
+import { Controller, Post, Body, Get, Param, Query, ParseIntPipe, HttpException, HttpStatus } from '@nestjs/common';
 import { IsNumber, IsOptional, IsString, IsArray, IsIn } from 'class-validator';
 import { EmailsService } from './emails.service';
 
@@ -37,6 +37,28 @@ export class EmailsController {
   @Post('send-draft')
   async sendEmailDraft(@Body() sendEmailDraftDto: SendEmailDraftDto) {
     return this.emailsService.sendEmailDraft(sendEmailDraftDto.draftId);
+  }
+
+  /**
+   * Get all email drafts from database
+   */
+  @Get('drafts')
+  async getAllEmailDrafts() {
+    try {
+      const drafts = await this.emailsService.getAllEmailDrafts();
+      
+      return {
+        message: 'All email drafts retrieved successfully',
+        success: true,
+        count: drafts.length,
+        data: drafts,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve email drafts',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   /**

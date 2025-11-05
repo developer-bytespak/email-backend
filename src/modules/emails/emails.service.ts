@@ -310,6 +310,44 @@ export class EmailsService {
   // }
 
   /**
+   * Get all email drafts from database
+   */
+  async getAllEmailDrafts(): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    return await scrapingClient.emailDraft.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phone: true,
+            website: true,
+          },
+        },
+        summary: {
+          select: {
+            id: true,
+            summaryText: true,
+            painPoints: true,
+            strengths: true,
+            opportunities: true,
+            keywords: true,
+          },
+        },
+        clientEmail: {
+          select: {
+            id: true,
+            emailAddress: true,
+          },
+        },
+      },
+    });
+  }
+
+  /**
    * Get email analytics for a campaign or contact
    */
   async getEmailAnalytics(contactId?: number, campaignId?: string) {
