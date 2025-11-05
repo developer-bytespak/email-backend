@@ -521,4 +521,119 @@ Best regards,
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  /**
+   * Get bulk status for multiple contacts (summary, email draft, SMS draft status)
+   * Returns status flags without full data to optimize performance
+   */
+  async getBulkStatus(contactIds: number[]): Promise<{
+    success: boolean;
+    data: Array<{
+      contactId: number;
+      hasSummary: boolean;
+      hasEmailDraft: boolean;
+      hasSMSDraft: boolean;
+      emailDraftId: number | null;
+      smsDraftId: number | null;
+      smsStatus: string | null;
+    }>;
+  }> {
+    try {
+      const scrapingClient = await this.prisma.getScrapingClient();
+
+      // Fetch summaries for all contacts
+      const summaries = await scrapingClient.summary.findMany({
+        where: { contactId: { in: contactIds } },
+        select: { contactId: true },
+        distinct: ['contactId'],
+      });
+
+      // Fetch email drafts for all contacts (get most recent one per contact)
+      const emailDrafts = await scrapingClient.emailDraft.findMany({
+        where: { contactId: { in: contactIds } },
+        select: { id: true, contactId: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Fetch SMS drafts for all contacts (get most recent one per contact)
+      const smsDrafts = await scrapingClient.smsDraft.findMany({
+        where: { contactId: { in: contactIds } },
+        select: { id: true, contactId: true, status: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // Fetch SMS logs to check if SMS was actually sent
+      const smsDraftIds = smsDrafts.map(d => d.id);
+      const smsLogs = smsDraftIds.length > 0 ? await scrapingClient.smsLog.findMany({
+        where: { smsDraftId: { in: smsDraftIds } },
+        select: { smsDraftId: true, status: true },
+        orderBy: { sentAt: 'desc' },
+      }) : [];
+
+      // Create maps for quick lookup
+      const summaryMap = new Set(summaries.map(s => s.contactId));
+      
+      // Get most recent email draft per contact
+      const emailDraftMap = new Map<number, number>();
+      emailDrafts.forEach(draft => {
+        if (!emailDraftMap.has(draft.contactId)) {
+          emailDraftMap.set(draft.contactId, draft.id);
+        }
+      });
+
+      // Get most recent SMS draft per contact and its status
+      const smsDraftMap = new Map<number, number>();
+      const smsDraftStatusMap = new Map<number, string>();
+      smsDrafts.forEach(draft => {
+        if (!smsDraftMap.has(draft.contactId)) {
+          smsDraftMap.set(draft.contactId, draft.id);
+          smsDraftStatusMap.set(draft.contactId, draft.status);
+        }
+      });
+
+      // Check SMS logs to determine if SMS was sent
+      // If there's a log with status 'success' or 'delivered', SMS was sent
+      const smsSentMap = new Map<number, boolean>();
+      smsLogs.forEach(log => {
+        if (!smsSentMap.has(log.smsDraftId)) {
+          // Check if SMS was successfully sent (success or delivered status)
+          const isSent = log.status === 'success' || log.status === 'delivered';
+          smsSentMap.set(log.smsDraftId, isSent);
+        }
+      });
+
+      // Build response array
+      const statusData = contactIds.map(contactId => {
+        const smsDraftId = smsDraftMap.get(contactId) || null;
+        const smsWasSent = smsDraftId ? smsSentMap.get(smsDraftId) || false : false;
+        const smsDraftStatus = smsDraftStatusMap.get(contactId);
+        
+        // Determine SMS status: 'sent' if log shows success, otherwise use draft status or 'draft'
+        let smsStatus: string | null = null;
+        if (smsWasSent) {
+          smsStatus = 'sent';
+        } else if (smsDraftStatus) {
+          smsStatus = smsDraftStatus; // 'draft' or 'ready'
+        }
+
+        return {
+          contactId,
+          hasSummary: summaryMap.has(contactId),
+          hasEmailDraft: emailDraftMap.has(contactId),
+          hasSMSDraft: smsDraftMap.has(contactId),
+          emailDraftId: emailDraftMap.get(contactId) || null,
+          smsDraftId,
+          smsStatus,
+        };
+      });
+
+      return {
+        success: true,
+        data: statusData,
+      };
+    } catch (error) {
+      this.logger.error('Error getting bulk status:', error);
+      throw new BadRequestException(`Failed to get bulk status: ${error.message}`);
+    }
+  }
 }
