@@ -1,4 +1,4 @@
-import { Controller, Post, Get, UploadedFile, UseInterceptors, Body, UseGuards, Request, Param, ParseIntPipe, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Get, UploadedFile, UseInterceptors, Body, UseGuards, Request, Param, Query, ParseIntPipe, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IngestionService } from './ingestion.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -60,6 +60,31 @@ export class IngestionController {
     return {
       message: 'Upload retrieved successfully',
       upload,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('contacts/all')
+  async getAllClientContacts(
+    @Request() req,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+    @Query('valid') valid?: string,
+  ) {
+    const clientId = req.user.id;
+    
+    const parsedLimit = limit ? parseInt(limit, 10) : 50;
+    
+    const contacts = await this.ingestionService.getAllClientContacts(clientId, {
+      limit: parsedLimit,
+      status,
+      valid: valid === 'true' ? true : valid === 'false' ? false : undefined,
+    });
+    
+    return {
+      message: 'All client contacts retrieved successfully',
+      count: contacts.length,
+      contacts,
     };
   }
 }

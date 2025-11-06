@@ -241,4 +241,45 @@ export class IngestionService {
       },
     });
   }
+
+  /**
+   * Get all contacts for a client (across all CSV uploads)
+   */
+  async getAllClientContacts(
+    clientId: number,
+    filters?: {
+      limit?: number;
+      status?: string;
+      valid?: boolean;
+    }
+  ): Promise<any[]> {
+    const where: any = {
+      csvUpload: {
+        clientId,  // Filter by client through csvUpload relation
+      },
+    };
+    
+    // Optional filters
+    if (filters?.status) {
+      where.status = filters.status;
+    }
+    if (filters?.valid !== undefined) {
+      where.valid = filters.valid;
+    }
+    
+    return await this.prisma.contact.findMany({
+      where,
+      take: filters?.limit || 50,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+  }
 }
