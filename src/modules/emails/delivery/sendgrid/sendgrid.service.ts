@@ -91,6 +91,12 @@ export class SendGridService {
    * Inject unsubscribe link at bottom of email
    */
   injectUnsubscribeLink(html: string, token: string, baseUrl: string): string {
+    // Check if unsubscribe link already exists to prevent duplicates
+    if (html.includes('/emails/unsubscribe/')) {
+      this.logger.warn('Unsubscribe link already exists in email, skipping injection');
+      return html;
+    }
+
     const unsubscribeUrl = `${baseUrl}/emails/unsubscribe/${token}`;
     const unsubscribeHtml = `
 <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee; font-size: 10px; color: #999; text-align: center;">
@@ -99,8 +105,10 @@ export class SendGridService {
 </div>`;
 
     // Append unsubscribe link before closing body tag, or at end if no body tag
-    if (html.includes('</body>')) {
-      return html.replace('</body>', `${unsubscribeHtml}</body>`);
+    // Use lastIndexOf to ensure we replace the LAST </body> tag
+    const lastBodyIndex = html.lastIndexOf('</body>');
+    if (lastBodyIndex !== -1) {
+      return html.slice(0, lastBodyIndex) + unsubscribeHtml + html.slice(lastBodyIndex);
     }
     return `${html}${unsubscribeHtml}`;
   }
@@ -113,10 +121,53 @@ export class SendGridService {
     const pixelHtml = `<img src="${pixelUrl}" width="1" height="1" style="display:none;" alt="" />`;
 
     // Append pixel before closing body tag, or at end if no body tag
-    if (html.includes('</body>')) {
-      return html.replace('</body>', `${pixelHtml}</body>`);
+    // Use lastIndexOf to ensure we replace the LAST </body> tag (in case unsubscribe link was added)
+    const lastBodyIndex = html.lastIndexOf('</body>');
+    if (lastBodyIndex !== -1) {
+      return html.slice(0, lastBodyIndex) + pixelHtml + html.slice(lastBodyIndex);
     }
     return `${html}${pixelHtml}`;
+  }
+
+  /**
+   * Convert plain text with newlines to HTML format
+   * Converts \n\n to paragraphs and \n to <br> tags
+   */
+  convertTextToHtml(text: string): string {
+    if (!text) return '';
+    
+    // Check if already HTML (contains HTML tags)
+    if (/<[a-z][\s\S]*>/i.test(text)) {
+      return text; // Already HTML, return as-is
+    }
+    
+    // Split by double newlines (paragraphs)
+    const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+    
+    // Convert each paragraph: single newlines become <br>, then wrap in <p>
+    const htmlParagraphs = paragraphs.map(paragraph => {
+      // Replace single newlines with <br> tags
+      const withBreaks = paragraph
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length > 0)
+        .join('<br>');
+      
+      return `<p style="margin: 0 0 16px 0; line-height: 1.6; color: #333;">${withBreaks}</p>`;
+    });
+    
+    // Wrap in a basic email template
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 16px; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  ${htmlParagraphs.join('')}
+</body>
+</html>`.trim();
   }
 
   /**
