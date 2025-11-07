@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
 import { randomBytes } from 'crypto';
 
@@ -228,6 +228,96 @@ export class UnsubscribeService {
       return html.replace('</body>', `${unsubscribeHtml}</body>`);
     }
     return `${html}${unsubscribeHtml}`;
+  }
+
+  /**
+   * Get all unsubscribe records
+   */
+  async getAllUnsubscribes(): Promise<
+    Array<{
+      id: number;
+      contactId: number;
+      email: string | null;
+      businessName: string;
+      phone: string | null;
+      unsubscribedAt: Date;
+      reason: string | null;
+    }>
+  > {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const records = await scrapingClient.emailUnsubscribe.findMany({
+      orderBy: {
+        unsubscribedAt: 'desc',
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            email: true,
+            businessName: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    return records.map(record => ({
+      id: record.id,
+      contactId: record.contactId,
+      email: record.contact?.email ?? null,
+      businessName: record.contact?.businessName ?? 'Unknown',
+      phone: record.contact?.phone ?? null,
+      unsubscribedAt: record.unsubscribedAt,
+      reason: record.reason,
+    }));
+  }
+
+  /**
+   * Resubscribe a contact by ID (dashboard API)
+   */
+  async resubscribeByContactId(clientId: number, contactId: number): Promise<{
+    success: boolean;
+    contactId: number;
+    message: string;
+  }> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const unsubscribeRecord = await scrapingClient.emailUnsubscribe.findUnique({
+      where: { contactId },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            csvUpload: {
+              select: {
+                clientId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!unsubscribeRecord) {
+      throw new NotFoundException('Unsubscribe record not found');
+    }
+
+    if (unsubscribeRecord.contact.csvUpload.clientId !== clientId) {
+      throw new ForbiddenException('You do not have access to this contact');
+    }
+
+    await scrapingClient.emailUnsubscribe.delete({
+      where: { contactId },
+    });
+
+    this.logger.log(`✅ Contact ${contactId} resubscribed via dashboard`);
+
+    return {
+      success: true,
+      contactId,
+      message: 'Contact resubscribed successfully.',
+    };
   }
 }
 
