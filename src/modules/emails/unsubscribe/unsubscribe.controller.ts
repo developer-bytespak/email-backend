@@ -1,7 +1,8 @@
-import { Controller, Get, Post, Param, Body, Res } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Res, UseGuards, Request, ParseIntPipe } from '@nestjs/common';
 import type { Response } from 'express';
 import { UnsubscribeService } from './unsubscribe.service';
 import { IsOptional, IsString } from 'class-validator';
+import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 export class UnsubscribeDto {
   @IsOptional()
@@ -12,6 +13,34 @@ export class UnsubscribeDto {
 @Controller('emails/unsubscribe')
 export class UnsubscribeController {
   constructor(private readonly unsubscribeService: UnsubscribeService) {}
+
+  /**
+   * Get all unsubscribe records (dashboard API)
+   * GET /emails/unsubscribe/all
+   */
+  @Get('all')
+  async getAllUnsubscribes() {
+    const data = await this.unsubscribeService.getAllUnsubscribes();
+    return {
+      success: true,
+      count: data.length,
+      data,
+    };
+  }
+
+  /**
+   * Resubscribe by contact id (dashboard API)
+   * POST /emails/unsubscribe/admin/resubscribe/:contactId
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/resubscribe/:contactId')
+  async resubscribeByContact(
+    @Request() req,
+    @Param('contactId', ParseIntPipe) contactId: number,
+  ) {
+    const clientId = req.user.id;
+    return this.unsubscribeService.resubscribeByContactId(clientId, contactId);
+  }
 
   /**
    * Get unsubscribe history (GET)
