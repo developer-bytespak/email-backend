@@ -26,13 +26,12 @@ export class UnsubscribeService {
     try {
       const scrapingClient = await this.prisma.getScrapingClient();
       
-      // Find EmailLog by tracking pixel token (we reuse the same token system)
-      // In production, you might want separate tokens for unsubscribe
+      // Find EmailLog by unsubscribe token
       const emailLog = await scrapingClient.emailLog.findFirst({
         where: {
           OR: [
-            { trackingPixelToken: token },
-            // Add other token lookup methods if needed
+            { unsubscribeToken: token },
+            { trackingPixelToken: token }, // Fallback for backward compatibility
           ],
         },
         include: {
@@ -113,7 +112,8 @@ export class UnsubscribeService {
     const emailLog = await scrapingClient.emailLog.findFirst({
       where: {
         OR: [
-          { trackingPixelToken: token },
+          { unsubscribeToken: token },
+          { trackingPixelToken: token }, // Fallback for backward compatibility
         ],
       },
       include: {
@@ -166,7 +166,8 @@ export class UnsubscribeService {
       const emailLog = await scrapingClient.emailLog.findFirst({
         where: {
           OR: [
-            { trackingPixelToken: token },
+            { unsubscribeToken: token },
+            { trackingPixelToken: token }, // Fallback for backward compatibility
           ],
         },
         include: {

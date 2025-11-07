@@ -186,13 +186,14 @@ export class EmailSchedulerService implements OnModuleInit {
 
       // Prepare email content
       const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-      let processedBody = draft.bodyText;
+      
+      // Convert plain text to HTML format (handles newlines properly)
+      let processedBody = this.sendGridService.convertTextToHtml(draft.bodyText);
       
       // Replace links with tracking URLs
       processedBody = this.sendGridService.replaceLinksWithTracking(processedBody, trackingToken, baseUrl);
       
-      // Inject unsubscribe link
-      processedBody = this.sendGridService.injectUnsubscribeLink(processedBody, unsubscribeToken, baseUrl);
+      // Note: Unsubscribe link will be injected by sendEmail method
 
       // Send via SendGrid
       const apiKey = clientEmail.sendgridApiKey || process.env.SENDGRID_API_KEY;
@@ -219,6 +220,7 @@ export class EmailSchedulerService implements OnModuleInit {
           status: 'pending',
           messageId: sendResult.messageId,
           trackingPixelToken: trackingToken,
+          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
           spamScore: spamCheck.score,
           sentVia: 'sendgrid',
           sentAt: new Date(),

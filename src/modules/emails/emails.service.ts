@@ -128,15 +128,17 @@ export class EmailsService {
       
       const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
       
+      // Convert plain text to HTML format (handles newlines properly)
+      let processedBody = this.sendGridService.convertTextToHtml(draft.bodyText);
+      
       // Replace links with tracking URLs
-      let processedBody = this.sendGridService.replaceLinksWithTracking(
-        draft.bodyText,
+      processedBody = this.sendGridService.replaceLinksWithTracking(
+        processedBody,
         trackingToken,
         baseUrl
       );
       
-      // Inject unsubscribe link (SendGrid service will also inject it, but we do it here for consistency)
-      processedBody = this.sendGridService.injectUnsubscribeLink(processedBody, unsubscribeToken, baseUrl);
+      // Note: Unsubscribe link will be injected by sendEmail method
 
       // 4. SEND VIA SENDGRID
       // Use client-specific API key if available, otherwise use global
@@ -164,6 +166,7 @@ export class EmailsService {
           status: 'pending', // Will be updated to 'delivered' via webhook
           messageId: sendResult.messageId,
           trackingPixelToken: trackingToken,
+          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
           spamScore: spamCheck.score,
           sentVia: 'sendgrid',
           sentAt: new Date(),

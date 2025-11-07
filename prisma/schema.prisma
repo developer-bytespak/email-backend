@@ -165,6 +165,7 @@ model EmailLog {
   // NEW FIELDS:
   messageId          String?   @unique // SendGrid message ID
   trackingPixelToken String?   @unique // Token for custom pixel (backup)
+  unsubscribeToken   String?   @unique // Token for unsubscribe link
   sentVia            String    @default("sendgrid")
   deliveredAt        DateTime?
   spamScore          Int? // Pre-send score (0-100)
