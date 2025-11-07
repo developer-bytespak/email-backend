@@ -15,14 +15,41 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { JwtService } from '@nestjs/jwt';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private jwtService: JwtService,
+  ) {}
 
   @Post('signup')
-  async signup(@Body() signupDto: SignupDto) {
-    return this.authService.signup(signupDto);
+  async signup(
+    @Body() signupDto: SignupDto,
+    @Response({ passthrough: true }) res,
+  ) {
+    const client = await this.authService.signup(signupDto);
+    
+    // Auto-login after signup: generate token and set cookie
+    const payload = { email: client.email, sub: client.id };
+    const access_token = this.jwtService.sign(payload);
+    
+    // Set HTTP-only cookie (same settings as login)
+    const isProduction = process.env.NODE_ENV === 'production';
+    res.cookie('access_token', access_token, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      path: '/',
+    });
+
+    return {
+      message: 'Registration successful',
+      client,
+      access_token, // Include token for frontend to store in localStorage
+    };
   }
 
   @Post('login')
