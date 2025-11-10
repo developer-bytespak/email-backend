@@ -152,6 +152,8 @@ export class EmailGenerationController {
    */
   @Post('bulk-status')
   async getBulkStatus(@Body() body: { contactIds: number[] }) {
-    return await this.emailGenerationService.getBulkStatus(body.contactIds);
+    return await this.emailGenerationService.getBulkStatus(body.contactIds, {
+      includeSms: false,
+    });
   }
 }
