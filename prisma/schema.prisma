@@ -87,6 +87,8 @@ model Contact {
   // NEW RELATIONS:
   emailEngagements EmailEngagement[]
   emailUnsubscribe EmailUnsubscribe?
+
+  @@index([csvUploadId, businessName])
 }
 
 enum ContactStatus {
@@ -170,6 +172,14 @@ model EmailLog {
   deliveredAt        DateTime?
   spamScore          Int? // Pre-send score (0-100)
 
+  // Webhook event tracking fields
+  processedAt  DateTime? // When SendGrid processed it
+  deferredAt   DateTime? // When email was deferred
+  retryAttempt Int? // Retry attempt number (for deferred events)
+  smtpId       String? // SMTP transaction ID
+  templateId   String? // SendGrid template ID
+  customArgs   Json? // Custom arguments as JSON
+
   emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id])
   contact    Contact    @relation(fields: [contactId], references: [id])
   Client     Client?    @relation(fields: [clientId], references: [id])
@@ -185,6 +195,8 @@ enum EmailLogStatus {
   failed
   bounced
   pending // NEW
+  processed // NEW: SendGrid accepted and queued the email
+  deferred // NEW: Temporary failure, retrying
   delivered // NEW
   blocked // NEW
   dropped // NEW
@@ -312,6 +324,10 @@ model ScrapedData {
   // Relations
   contact   Contact   @relation(fields: [contactId], references: [id])
   summaries Summary[]
+
+  @@index([contactId, scrapedAt], map: "ScrapedData_contactId_scrapedAt_idx")
+  @@index([scrapeSuccess], map: "ScrapedData_scrapeSuccess_idx")
+  @@index([method, scrapedAt], map: "ScrapedData_method_scrapedAt_idx")
 }
 
 // ==========================================

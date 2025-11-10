@@ -14,6 +14,15 @@ export interface SendGridWebhookEvent {
   bounce_classification?: string;
   type?: string;
   category?: string[];
+  // Additional fields for processed/deferred events
+  attempt?: number;        // Retry attempt number (for deferred)
+  response?: string;      // SMTP response message
+  smtp_id?: string;       // SMTP transaction ID
+  useragent?: string;     // User agent (for opens)
+  ip?: string;            // IP address (for opens/clicks)
+  drop_reason?: string;   // Reason for dropped emails
+  template_id?: string;  // SendGrid template ID
+  custom_args?: Record<string, string>; // Custom arguments
 }
 
 @Injectable()
@@ -48,6 +57,12 @@ export class BounceManagementService {
 
     // Route to appropriate handler based on event type
     switch (event.event) {
+      case 'processed':
+        await this.handleProcessed(event, emailLog);
+        break;
+      case 'deferred':
+        await this.handleDeferred(event, emailLog);
+        break;
       case 'open':
         await this.handleOpen(event, emailLog);
         break;
@@ -75,6 +90,46 @@ export class BounceManagementService {
       default:
         this.logger.debug(`Unhandled webhook event type: ${event.event}`);
     }
+  }
+
+  /**
+   * Handle processed event - SendGrid accepted and queued the email
+   */
+  private async handleProcessed(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    await scrapingClient.emailLog.update({
+      where: { id: emailLog.id },
+      data: {
+        status: 'processed',
+        processedAt: new Date(event.timestamp * 1000),
+        smtpId: event.smtp_id,
+        templateId: event.template_id,
+        customArgs: event.custom_args ? JSON.parse(JSON.stringify(event.custom_args)) : null,
+      },
+    });
+
+    this.logger.log(`✅ Email processed by SendGrid (EmailLog ID: ${emailLog.id})`);
+  }
+
+  /**
+   * Handle deferred event - Temporary failure, will retry
+   */
+  private async handleDeferred(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    await scrapingClient.emailLog.update({
+      where: { id: emailLog.id },
+      data: {
+        status: 'deferred',
+        deferredAt: new Date(event.timestamp * 1000),
+        retryAttempt: event.attempt || 1,
+      },
+    });
+
+    this.logger.warn(
+      `⏸️ Email deferred (EmailLog ID: ${emailLog.id}, Attempt: ${event.attempt || 1}, Response: ${event.response || 'N/A'})`
+    );
   }
 
   /**

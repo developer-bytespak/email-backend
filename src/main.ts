@@ -3,12 +3,20 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import * as dotenv from 'dotenv';
+import * as express from 'express';
 
 // Load environment variables from .env file
 dotenv.config();
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  
+  // IMPORTANT: Raw body parser for webhook signature verification
+  // Must be added BEFORE JSON parser for the webhook route
+  app.use('/emails/webhooks/sendgrid', express.raw({ type: 'application/json' }));
+  
+  // JSON parser for all other routes
+  app.use(express.json());
   
   // Enable CORS for frontend
   app.enableCors({
