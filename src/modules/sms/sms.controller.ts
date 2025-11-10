@@ -31,6 +31,28 @@ export class SmsController {
   }
 
   /**
+   * Get SMS status for multiple contacts
+   * POST /sms/bulk-status
+   */
+  @Post('bulk-status')
+  async getBulkStatus(@Body() body: { contactIds: number[] }) {
+    try {
+      const result = await this.smsService.getBulkStatus(body.contactIds);
+      return {
+        message: 'SMS status retrieved successfully',
+        success: true,
+        count: result.data.length,
+        data: result.data,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve SMS status',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * Get all SMS drafts from database
    * GET /sms/drafts
    */

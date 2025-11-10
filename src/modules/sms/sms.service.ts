@@ -277,6 +277,84 @@ Only return the final SMS text (no labels, no explanations).
   }
 
   /**
+   * Get SMS status flags for multiple contacts
+   * Returns latest draft id and delivery status (if available)
+   */
+  async getBulkStatus(contactIds: number[]): Promise<{
+    success: boolean;
+    data: Array<{
+      contactId: number;
+      hasSmsDraft: boolean;
+      smsDraftId: number | null;
+      smsStatus: string | null;
+    }>;
+  }> {
+    if (!Array.isArray(contactIds) || contactIds.length === 0) {
+      return { success: true, data: [] };
+    }
+
+    const scrapingClient = await this.prisma;
+
+    const smsDrafts = await scrapingClient.smsDraft.findMany({
+      where: { contactId: { in: contactIds } },
+      select: { id: true, contactId: true, status: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const smsDraftIds = smsDrafts.map((draft) => draft.id);
+    const smsLogs =
+      smsDraftIds.length > 0
+        ? await scrapingClient.smsLog.findMany({
+            where: { smsDraftId: { in: smsDraftIds } },
+            select: { smsDraftId: true, status: true },
+            orderBy: { sentAt: 'desc' },
+          })
+        : [];
+
+    const smsDraftMap = new Map<number, number>();
+    const smsDraftStatusMap = new Map<number, string>();
+    smsDrafts.forEach((draft) => {
+      if (!smsDraftMap.has(draft.contactId)) {
+        smsDraftMap.set(draft.contactId, draft.id);
+        smsDraftStatusMap.set(draft.contactId, draft.status);
+      }
+    });
+
+    const smsSentMap = new Map<number, boolean>();
+    smsLogs.forEach((log) => {
+      if (!smsSentMap.has(log.smsDraftId)) {
+        const isSent = log.status === 'success' || log.status === 'delivered';
+        smsSentMap.set(log.smsDraftId, isSent);
+      }
+    });
+
+    const data = contactIds.map((contactId) => {
+      const smsDraftId = smsDraftMap.get(contactId) || null;
+      const smsWasSent = smsDraftId ? smsSentMap.get(smsDraftId) || false : false;
+      const smsDraftStatus = smsDraftStatusMap.get(contactId);
+
+      let smsStatus: string | null = null;
+      if (smsWasSent) {
+        smsStatus = 'sent';
+      } else if (smsDraftStatus) {
+        smsStatus = smsDraftStatus;
+      }
+
+      return {
+        contactId,
+        hasSmsDraft: smsDraftMap.has(contactId),
+        smsDraftId,
+        smsStatus,
+      };
+    });
+
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  /**
    * Send an existing SMS draft via Twilio and create a log
    */
   async sendDraft(smsDraftId: number, overrideTo?: string) {
