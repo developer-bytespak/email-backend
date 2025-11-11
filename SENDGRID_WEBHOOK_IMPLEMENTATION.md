@@ -555,6 +555,16 @@ SendGrid provides a webhook testing tool:
 2. Click "Test Your Integration"
 3. Send test events to your webhook
 
+### Analytics Verification
+
+1. Hit the new protected endpoints to ensure aggregation works:
+   - `GET /emails/analytics/overview`
+   - `GET /emails/analytics/timeline`
+   - `GET /emails/analytics/events`
+2. Confirm responses contain counts for requests, delivered, opened, clicked, bounced, spam reports, and unsubscribes.
+3. Load `/dashboard/analytics` (frontend) to visualize the metrics; compare totals against raw responses.
+4. Trigger sample webhook events (processed, delivered, open, click, bounce) and refresh the dashboard to verify charts and tables update.
+
 ---
 
 ## Performance Considerations
