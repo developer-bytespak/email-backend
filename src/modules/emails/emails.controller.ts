@@ -1,6 +1,21 @@
-import { Controller, Post, Body, Get, Param, Query, ParseIntPipe, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Param,
+  Query,
+  ParseIntPipe,
+  HttpException,
+  HttpStatus,
+  UseGuards,
+  BadRequestException,
+  UnauthorizedException,
+  Request,
+} from '@nestjs/common';
 import { IsNumber, IsOptional, IsString, IsArray, IsIn } from 'class-validator';
 import { EmailsService } from './emails.service';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 export class SendEmailDraftDto {
   @IsNumber()
@@ -42,10 +57,27 @@ export class EmailsController {
   /**
    * Get all email drafts from database
    */
+  @UseGuards(JwtAuthGuard)
   @Get('drafts')
-  async getAllEmailDrafts() {
+  async getAllEmailDrafts(
+    @Request() req,
+    @Query('clientEmailId') clientEmailIdParam?: string,
+  ) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    let clientEmailId: number | undefined;
+    if (clientEmailIdParam !== undefined) {
+      clientEmailId = Number(clientEmailIdParam);
+      if (!Number.isInteger(clientEmailId)) {
+        throw new BadRequestException('clientEmailId must be a numeric value');
+      }
+    }
+
     try {
-      const drafts = await this.emailsService.getAllEmailDrafts();
+      const drafts = await this.emailsService.getDraftsForClient(clientId, clientEmailId);
       
       return {
         message: 'All email drafts retrieved successfully',
