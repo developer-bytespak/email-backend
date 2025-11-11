@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
 import { EmailGenerationService } from './generation/email-generation.service';
 import { SendGridService } from './delivery/sendgrid/sendgrid.service';
@@ -313,12 +314,24 @@ export class EmailsService {
   // }
 
   /**
-   * Get all email drafts from database
+   * Get email drafts scoped to a specific client (optionally filtered by clientEmailId)
    */
-  async getAllEmailDrafts(): Promise<any[]> {
+  async getDraftsForClient(clientId: number, clientEmailId?: number): Promise<any[]> {
     const scrapingClient = await this.prisma.getScrapingClient();
-    
-    return await scrapingClient.emailDraft.findMany({
+
+    const where: Prisma.EmailDraftWhereInput = {
+      OR: [
+        { clientId },
+        { clientEmail: { clientId } },
+      ],
+    };
+
+    if (clientEmailId !== undefined) {
+      where.clientEmailId = clientEmailId;
+    }
+
+    return scrapingClient.emailDraft.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       include: {
         contact: {
@@ -344,6 +357,7 @@ export class EmailsService {
           select: {
             id: true,
             emailAddress: true,
+            clientId: true,
           },
         },
       },
