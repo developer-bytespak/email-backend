@@ -8,6 +8,7 @@ import { UnsubscribeModule } from './unsubscribe/unsubscribe.module';
 import { EmailTrackingModule } from './tracking/email-tracking.module';
 import { EmailSchedulerModule } from './scheduling/email-scheduler.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { EmailAnalyticsModule } from './analytics/email-analytics.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     EmailTrackingModule,
     EmailSchedulerModule,
     WebhooksModule,
+    EmailAnalyticsModule,
   ],
   controllers: [EmailsController],
   providers: [EmailsService],
