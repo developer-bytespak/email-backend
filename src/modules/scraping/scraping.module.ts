@@ -4,6 +4,7 @@ import { ScrapingController } from './scraping.controller';
 import { CheerioScraperService } from './scrapers/cheerio.scraper';
 import { PlaywrightScraperService } from './scrapers/playwright.scraper';
 import { GoogleSearchService } from './scrapers/google-search.service';
+import { ProxyManagerService } from './scrapers/proxy-manager.service';
 import { ScrapingHistoryModule } from './history/scraping-history.module';
 
 @Module({
@@ -12,6 +13,7 @@ import { ScrapingHistoryModule } from './history/scraping-history.module';
   ],
   controllers: [ScrapingController],
   providers: [
+    ProxyManagerService, // Proxy manager must be provided first
     ScrapingService,
     CheerioScraperService,
     PlaywrightScraperService,

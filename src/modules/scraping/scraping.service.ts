@@ -29,6 +29,100 @@ export class ScrapingService {
   ) {}
 
   /**
+   * Convert technical error messages to user-friendly messages
+   */
+  private getUserFriendlyErrorMessage(error: any): string {
+    // Extract error message from various error formats
+    let errorMessage = 'Unknown error';
+    if (error?.message) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    } else if (error?.toString) {
+      errorMessage = error.toString();
+    }
+    
+    // Also check for nested errors (common in wrapped errors)
+    if (error?.cause?.message) {
+      errorMessage = `${errorMessage}. ${error.cause.message}`;
+    }
+    
+    const lowerError = errorMessage.toLowerCase();
+
+    // Network/Connection errors - check timeout first as it's most common
+    if (lowerError.includes('timeout') || lowerError.includes('timed out') || lowerError.includes('timeout exceeded')) {
+      return 'The website took too long to respond. The site might be slow or temporarily unavailable.';
+    }
+    if (lowerError.includes('econnrefused') || lowerError.includes('connection refused')) {
+      return 'Could not connect to the website. The site might be down or blocking our requests.';
+    }
+    if (lowerError.includes('enotfound') || lowerError.includes('getaddrinfo')) {
+      return 'The website address could not be found. Please check if the URL is correct.';
+    }
+    if (lowerError.includes('network') || lowerError.includes('network error')) {
+      return 'A network error occurred while trying to access the website.';
+    }
+
+    // HTTP errors
+    if (lowerError.includes('404') || lowerError.includes('not found')) {
+      return 'The website page was not found. The URL might be incorrect or the page may have been removed.';
+    }
+    if (lowerError.includes('403') || lowerError.includes('forbidden')) {
+      return 'Access to the website was denied. The site may be blocking automated access.';
+    }
+    if (lowerError.includes('401') || lowerError.includes('unauthorized')) {
+      return 'Access to the website requires authentication.';
+    }
+    if (lowerError.includes('500') || lowerError.includes('internal server error')) {
+      return 'The website server encountered an error. Please try again later.';
+    }
+    if (lowerError.includes('429') || lowerError.includes('too many requests')) {
+      return 'Too many requests were sent. Please wait a moment and try again.';
+    }
+
+    // Scraping-specific errors
+    if (lowerError.includes('no search results') || lowerError.includes('no results found')) {
+      return 'Could not find the business website through search. The business information may be incomplete.';
+    }
+    if (lowerError.includes('invalid email') || lowerError.includes('email extraction')) {
+      return 'Could not extract a valid email address from the website.';
+    }
+    if (lowerError.includes('all attempts exhausted') || 
+        lowerError.includes('after 5 attempts') || 
+        lowerError.includes('after 3 attempts')) {
+      return 'Unable to access the website. The site may be blocking automated access or temporarily unavailable.';
+    }
+    if (lowerError.includes('cloudflare') && (lowerError.includes('blocking') || lowerError.includes('not resolved'))) {
+      return 'Unable to access the website. The site is protected by security measures that are blocking automated access.';
+    }
+    if (lowerError.includes('blocking all automated access')) {
+      return 'Unable to access the website. The site is blocking automated access attempts.';
+    }
+    if (lowerError.includes('playwright') && lowerError.includes('failed')) {
+      return 'The website requires advanced browser features that could not be loaded.';
+    }
+    if (lowerError.includes('cheerio') && lowerError.includes('failed')) {
+      return 'Could not read the website content. The site might use advanced features that require a browser.';
+    }
+
+    // Domain/URL errors
+    if (lowerError.includes('invalid url') || lowerError.includes('malformed url')) {
+      return 'The website address is invalid or incorrectly formatted.';
+    }
+    if (lowerError.includes('domain') && lowerError.includes('extraction')) {
+      return 'Could not extract a valid website domain from the email address.';
+    }
+
+    // Generic fallback
+    if (lowerError.includes('unknown') || lowerError.length < 10) {
+      return 'An unexpected error occurred while scraping the website. Please try again later.';
+    }
+
+    // Return a simplified version of the error if it's somewhat readable
+    return `Could not scrape the website: ${errorMessage.split(':').pop()?.trim() || 'Unknown error'}`;
+  }
+
+  /**
    * Scrape a single contact by ID
    */
   async scrapeContact(contactId: number): Promise<ScrapeResult> {
@@ -124,15 +218,41 @@ export class ScrapingService {
         scrapedData: savedScrapedData,
       };
     } catch (error) {
-      // Update contact status to scrape_failed using session pool
+      // Get user-friendly error message
+      const userFriendlyError = this.getUserFriendlyErrorMessage(error);
+      console.log(`[SCRAPE] Error for contact ${contactId}:`, error?.message || error);
+      console.log(`[SCRAPE] User-friendly error message:`, userFriendlyError);
+      
+      // Update contact status to scrape_failed and create ScrapedData record
       try {
         const scrapingClient = await this.prisma.getScrapingClient();
-        await scrapingClient.contact.update({
+        
+        // Get contact info for creating ScrapedData record
+        const contact = await scrapingClient.contact.findUnique({
           where: { id: contactId },
-          data: { 
-            status: 'scrape_failed' as ContactStatus,
-          },
         });
+
+        if (contact) {
+          // Create ScrapedData record with failure information
+          const scrapedDataRecord = await scrapingClient.scrapedData.create({
+            data: {
+              contactId: contact.id,
+              method: contact.scrapeMethod || 'direct_url',
+              url: contact.website || '',
+              scrapeSuccess: false,
+              errorMessage: userFriendlyError,
+            },
+          });
+          console.log(`[SCRAPE] Created ScrapedData record ${scrapedDataRecord.id} with errorMessage:`, scrapedDataRecord.errorMessage);
+
+          // Update contact status to scrape_failed
+          await scrapingClient.contact.update({
+            where: { id: contactId },
+            data: { 
+              status: 'scrape_failed' as ContactStatus,
+            },
+          });
+        }
       } catch (updateError) {
         console.error('Failed to update contact status to scrape_failed:', updateError);
       }
@@ -140,7 +260,7 @@ export class ScrapingService {
       return {
         contactId,
         success: false,
-        error: error.message || 'Unknown scraping error',
+        error: userFriendlyError,
       };
     }
   }
@@ -342,8 +462,47 @@ export class ScrapingService {
         }
       }
 
-      // Discover and scrape additional pages
+      // Discover and scrape additional pages (uses homepageData.html - already scraped!)
       const additionalPages = await this.discoverAndScrapePages(contact.website, homepageData);
+      
+      // Enrich emails/phones with footer and contact page data if missing from homepage
+      let extractedEmails = homepageData.extractedEmails || [];
+      let extractedPhones = homepageData.extractedPhones || [];
+      
+      // First, try to extract from footer if missing
+      if (homepageData.html && (extractedEmails.length === 0 || extractedPhones.length === 0)) {
+        const footerContact = this.extractFooterContactInfo(homepageData.html);
+        
+        // Add footer emails if not already found
+        if (footerContact.emails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...footerContact.emails])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.emails.length} emails from footer`);
+        }
+        
+        // Add footer phones if not already found
+        if (footerContact.phones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...footerContact.phones])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.phones.length} phones from footer`);
+        }
+      }
+      
+      // If still missing, try contact page data
+      if (additionalPages.contact) {
+        const contactEmails = additionalPages.contact.extractedEmails || [];
+        const contactPhones = additionalPages.contact.extractedPhones || [];
+        
+        // Add contact page emails if not already found
+        if (contactEmails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...contactEmails])];
+          console.log(`[SCRAPE] Enriched with ${contactEmails.length} emails from contact page`);
+        }
+        
+        // Add contact page phones if not already found
+        if (contactPhones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...contactPhones])];
+          console.log(`[SCRAPE] Enriched with ${contactPhones.length} phones from contact page`);
+        }
+      }
       
       return {
         method: 'direct_url',
@@ -356,8 +515,8 @@ export class ScrapingService {
         productsHtml: additionalPages.products?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
-        extractedEmails: homepageData.extractedEmails,
-        extractedPhones: homepageData.extractedPhones,
+        extractedEmails: extractedEmails, // Enriched with contact page emails if needed
+        extractedPhones: extractedPhones, // Enriched with contact page phones if needed
         pageTitle: homepageData.title,
         metaDescription: homepageData.metaDescription,
         scrapeSuccess: homepageData.scrapeSuccess,
@@ -404,6 +563,45 @@ export class ScrapingService {
       // Discover and scrape additional pages
       const additionalPages = await this.discoverAndScrapePages(discoveredUrl, homepageData);
       
+      // Enrich emails/phones with footer and contact page data if missing from homepage
+      let extractedEmails = homepageData.extractedEmails || [];
+      let extractedPhones = homepageData.extractedPhones || [];
+      
+      // First, try to extract from footer if missing
+      if (homepageData.html && (extractedEmails.length === 0 || extractedPhones.length === 0)) {
+        const footerContact = this.extractFooterContactInfo(homepageData.html);
+        
+        // Add footer emails if not already found
+        if (footerContact.emails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...footerContact.emails])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.emails.length} emails from footer`);
+        }
+        
+        // Add footer phones if not already found
+        if (footerContact.phones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...footerContact.phones])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.phones.length} phones from footer`);
+        }
+      }
+      
+      // If still missing, try contact page data
+      if (additionalPages.contact) {
+        const contactEmails = additionalPages.contact.extractedEmails || [];
+        const contactPhones = additionalPages.contact.extractedPhones || [];
+        
+        // Add contact page emails if not already found
+        if (contactEmails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...contactEmails])];
+          console.log(`[SCRAPE] Enriched with ${contactEmails.length} emails from contact page`);
+        }
+        
+        // Add contact page phones if not already found
+        if (contactPhones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...contactPhones])];
+          console.log(`[SCRAPE] Enriched with ${contactPhones.length} phones from contact page`);
+        }
+      }
+      
       return {
         method: 'email_domain',
         searchQuery: `site:${domain}`,
@@ -416,8 +614,8 @@ export class ScrapingService {
         productsHtml: additionalPages.products?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
-        extractedEmails: homepageData.extractedEmails,
-        extractedPhones: homepageData.extractedPhones,
+        extractedEmails: extractedEmails, // Enriched with contact page emails if needed
+        extractedPhones: extractedPhones, // Enriched with contact page phones if needed
         pageTitle: homepageData.title,
         metaDescription: homepageData.metaDescription,
         scrapeSuccess: homepageData.scrapeSuccess,
@@ -470,6 +668,45 @@ export class ScrapingService {
       // Discover and scrape additional pages
       const additionalPages = await this.discoverAndScrapePages(discoveredUrl, homepageData);
       
+      // Enrich emails/phones with footer and contact page data if missing from homepage
+      let extractedEmails = homepageData.extractedEmails || [];
+      let extractedPhones = homepageData.extractedPhones || [];
+      
+      // First, try to extract from footer if missing
+      if (homepageData.html && (extractedEmails.length === 0 || extractedPhones.length === 0)) {
+        const footerContact = this.extractFooterContactInfo(homepageData.html);
+        
+        // Add footer emails if not already found
+        if (footerContact.emails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...footerContact.emails])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.emails.length} emails from footer`);
+        }
+        
+        // Add footer phones if not already found
+        if (footerContact.phones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...footerContact.phones])];
+          console.log(`[SCRAPE] Enriched with ${footerContact.phones.length} phones from footer`);
+        }
+      }
+      
+      // If still missing, try contact page data
+      if (additionalPages.contact) {
+        const contactEmails = additionalPages.contact.extractedEmails || [];
+        const contactPhones = additionalPages.contact.extractedPhones || [];
+        
+        // Add contact page emails if not already found
+        if (contactEmails.length > 0 && extractedEmails.length === 0) {
+          extractedEmails = [...new Set([...extractedEmails, ...contactEmails])];
+          console.log(`[SCRAPE] Enriched with ${contactEmails.length} emails from contact page`);
+        }
+        
+        // Add contact page phones if not already found
+        if (contactPhones.length > 0 && extractedPhones.length === 0) {
+          extractedPhones = [...new Set([...extractedPhones, ...contactPhones])];
+          console.log(`[SCRAPE] Enriched with ${contactPhones.length} phones from contact page`);
+        }
+      }
+      
       return {
         method: 'business_search',
         searchQuery,
@@ -482,8 +719,8 @@ export class ScrapingService {
         productsHtml: additionalPages.products?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
-        extractedEmails: homepageData.extractedEmails,
-        extractedPhones: homepageData.extractedPhones,
+        extractedEmails: extractedEmails, // Enriched with contact page emails if needed
+        extractedPhones: extractedPhones, // Enriched with contact page phones if needed
         pageTitle: homepageData.title,
         metaDescription: homepageData.metaDescription,
         scrapeSuccess: homepageData.scrapeSuccess,
@@ -503,30 +740,171 @@ export class ScrapingService {
   }
 
   /**
+   * Extract navigation links with labels from homepage HTML
+   * Uses already-scraped HTML - no re-scraping needed!
+   */
+  private extractNavigationLinksFromHtml(html: string, baseUrl: string): Array<{url: string, label: string, source: string}> {
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(html);
+    const baseUrlObj = new URL(baseUrl);
+    const baseDomain = baseUrlObj.hostname.replace(/^www\./, ''); // Normalize domain (remove www)
+    const basePath = baseUrlObj.pathname === '/' ? '' : baseUrlObj.pathname;
+    const links: Array<{url: string, label: string, source: string}> = [];
+    
+    // Priority areas: nav, header, main menu (most important)
+    const prioritySelectors = [
+      'nav a[href]',
+      'header a[href]',
+      '.navbar a[href]',
+      '.menu a[href]',
+      '.navigation a[href]',
+      '[role="navigation"] a[href]',
+      '.main-menu a[href]',
+      '.primary-menu a[href]',
+      '.wp-block-button a[href]' // WordPress block buttons
+    ];
+    
+    // Secondary areas: footer (less important but still useful)
+    const secondarySelectors = [
+      'footer a[href]',
+      '.footer a[href]'
+    ];
+    
+    const normalizeUrl = (url: string): string => {
+      try {
+        const urlObj = new URL(url);
+        // Normalize hostname (remove www)
+        const normalizedHost = urlObj.hostname.replace(/^www\./, '');
+        return `${urlObj.protocol}//${normalizedHost}${urlObj.pathname}${urlObj.search}`;
+      } catch {
+        return url;
+      }
+    };
+    
+    const isHomepage = (url: string): boolean => {
+      const normalized = normalizeUrl(url);
+      const baseNormalized = normalizeUrl(baseUrl);
+      return normalized === baseNormalized || normalized === `${baseNormalized}/` || normalized === `${baseNormalized.replace(/\/$/, '')}/`;
+    };
+    
+    const extractLinks = (selector: string, source: string) => {
+      $(selector).each((_: any, element: any) => {
+        const $el = $(element);
+        const href = $el.attr('href');
+        const label = $el.text().trim();
+        
+        // Extract links even if they don't have visible text (label can be empty)
+        if (href) {
+          try {
+            const fullUrl = new URL(href, baseUrl).href;
+            const linkDomain = new URL(fullUrl).hostname.replace(/^www\./, ''); // Normalize
+            
+            // Only internal links, exclude anchors, mailto, tel, and homepage itself
+            if (linkDomain === baseDomain && 
+                !href.startsWith('#') && 
+                !href.startsWith('mailto:') && 
+                !href.startsWith('tel:') &&
+                !isHomepage(fullUrl)) {
+              links.push({
+                url: fullUrl,
+                label: label ? label.toLowerCase() : '',
+                source: source
+              });
+            }
+          } catch (e) {
+            // Invalid URL, skip
+          }
+        }
+      });
+    };
+    
+    // Extract from priority areas first
+    prioritySelectors.forEach(selector => {
+      extractLinks(selector, 'navigation');
+    });
+    
+    // Extract from secondary areas
+    secondarySelectors.forEach(selector => {
+      extractLinks(selector, 'footer');
+    });
+    
+    // Remove duplicates (same URL), prefer navigation source
+    const uniqueLinks = new Map<string, {url: string, label: string, source: string}>();
+    links.forEach(link => {
+      const normalizedUrl = normalizeUrl(link.url);
+      if (!uniqueLinks.has(normalizedUrl)) {
+        uniqueLinks.set(normalizedUrl, link);
+      } else {
+        // If duplicate, prefer navigation source over footer
+        const existing = uniqueLinks.get(normalizedUrl)!;
+        if (link.source === 'navigation' && existing.source === 'footer') {
+          uniqueLinks.set(normalizedUrl, link);
+        }
+      }
+    });
+    
+    return Array.from(uniqueLinks.values());
+  }
+
+  /**
+   * Extract contact info (emails and phones) from footer HTML
+   */
+  private extractFooterContactInfo(html: string): {emails: string[], phones: string[]} {
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(html);
+    
+    // Get footer text
+    const footerText = $('footer').text() || '';
+    
+    // Extract emails from footer
+    const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g;
+    const emailMatches = footerText.match(emailRegex) || [];
+    const footerEmails = (emailMatches as string[]).filter((email: string) => {
+      // Filter out common non-business emails
+      return !email.includes('example.com') && !email.includes('test.com');
+    });
+    
+    // Extract phones from footer (matches patterns like +1 (617) 383-7474, (617) 383-7474, 617-383-7474, etc.)
+    const phoneRegex = /(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g;
+    const phoneMatches = footerText.match(phoneRegex) || [];
+    const footerPhones = (phoneMatches as string[]).map((p: string) => p.trim());
+    
+    return {
+      emails: [...new Set(footerEmails)], // Remove duplicates
+      phones: [...new Set(footerPhones)] // Remove duplicates
+    };
+  }
+
+  /**
    * Discover and scrape additional pages (services, products, contact)
    */
   private async discoverAndScrapePages(baseUrl: string, homepageData: any): Promise<any> {
     const additionalPages: any = {};
     
     try {
-      // Extract internal links from homepage
-      let internalLinks = homepageData.links || [];
+      // STEP 1: Extract navigation links with labels from homepage HTML (already scraped!)
+      console.log(`[SCRAPE] Extracting navigation links from homepage HTML...`);
       
-      // If homepage was scraped with Playwright, we already have good links
-      // If not, try to get better links using Playwright for SPAs
-      if (internalLinks.length === 0 || this.isLikelySPA(homepageData)) {
-        console.log(`[SCRAPE] Re-scraping homepage with Playwright for better link discovery`);
-        try {
-          const enhancedHomepageData = await this.playwrightScraper.scrapeUrl(baseUrl);
-          internalLinks = enhancedHomepageData.links || [];
-          console.log(`[SCRAPE] Found ${internalLinks.length} links with Playwright`);
-        } catch (playwrightError) {
-          console.log(`[SCRAPE] Playwright link discovery failed: ${playwrightError.message}`);
-        }
+      let navLinksWithLabels: Array<{url: string, label: string, source: string}> = [];
+      
+      // Use homepage HTML if available (most efficient - already scraped!)
+      if (homepageData.html) {
+        navLinksWithLabels = this.extractNavigationLinksFromHtml(homepageData.html, baseUrl);
+        console.log(`[SCRAPE] Extracted ${navLinksWithLabels.length} navigation links from HTML`);
+      } else {
+        // Fallback: use basic links if HTML not available
+        console.log(`[SCRAPE] Homepage HTML not available, using basic link extraction`);
+        const internalLinks = homepageData.links || [];
+        navLinksWithLabels = internalLinks.map((url: string) => ({
+          url,
+          label: '',
+          source: 'fallback'
+        }));
       }
       
-      // Find potential page URLs
-      const pageUrls = this.findPageUrls(baseUrl, internalLinks);
+      // STEP 2: Map links to page categories using enhanced findPageUrls (with labels)
+      const pageUrls = this.findPageUrls(baseUrl, navLinksWithLabels);
+      console.log(`[SCRAPE] Mapped pages:`, Object.keys(pageUrls));
       
       // If no pages found through links, try common URL patterns
       if (Object.keys(pageUrls).length === 0) {
@@ -538,6 +916,15 @@ export class ScrapingService {
       // Scrape each discovered page
       for (const [pageType, url] of Object.entries(pageUrls)) {
         if (url && typeof url === 'string' && this.isValidScrapingUrl(url)) {
+          // Skip login/auth pages (shouldn't happen due to exclusion, but double-check)
+          const urlLower = url.toLowerCase();
+          if (urlLower.includes('/login') || urlLower.includes('/signin') || 
+              urlLower.includes('/sign-in') || urlLower.includes('/auth') ||
+              urlLower.includes('/signup') || urlLower.includes('/register')) {
+            console.log(`[SCRAPE] Skipping login/auth page: ${url}`);
+            continue;
+          }
+          
           try {
             console.log(`[SCRAPE] Scraping ${pageType} page: ${url}`);
             
@@ -562,7 +949,10 @@ export class ScrapingService {
               content: pageData.content,
               html: pageData.html,
               title: pageData.title,
-              url: url
+              url: url,
+              // Store extracted emails/phones from contact page for enrichment
+              extractedEmails: pageData.extractedEmails || [],
+              extractedPhones: pageData.extractedPhones || []
             };
             
             // Add delay between page requests
@@ -627,71 +1017,150 @@ export class ScrapingService {
   }
 
   /**
-   * Find potential page URLs from internal links
+   * Find potential page URLs from internal links - Enhanced with label matching
    */
-  private findPageUrls(baseUrl: string, links: string[]): any {
+  private findPageUrls(baseUrl: string, links: string[] | Array<{url: string, label: string, source: string}>): any {
     const baseDomain = new URL(baseUrl).hostname;
     const pageUrls: any = {};
     
-    // Enhanced page patterns to look for (more flexible matching)
+    // Convert to unified format if needed
+    const linksWithLabels: Array<{url: string, label: string, source: string}> = links.map(link => {
+      if (typeof link === 'string') {
+        return { url: link, label: '', source: 'fallback' };
+      }
+      return link;
+    });
+    
+    // Enhanced page patterns with keywords for label matching
     const pagePatterns = {
-      services: [
-        '/services', '/service', '/what-we-do', '/our-services',
-        '/offerings', '/solutions', '/expertise', '/capabilities',
-        '/what-we-offer', '/our-work', '/specialties', '/practice-areas'
-      ],
-      products: [
-        '/products', '/product', '/catalog', '/portfolio',
-        '/gallery', '/work', '/projects', '/showcase',
-        '/portfolio', '/gallery', '/case-studies', '/examples'
-      ],
-      contact: [
-        '/contact', '/contact-us', '/get-in-touch', '/reach-us',
-        '/about', '/about-us', '/company', '/team',
-        '/location', '/locations', '/office', '/offices'
-      ]
+      services: {
+        urlPatterns: [
+          '/services', '/service', '/what-we-do', '/our-services',
+          '/offerings', '/solutions', '/expertise', '/capabilities',
+          '/what-we-offer', '/our-work', '/specialties', '/practice-areas'
+        ],
+        labelKeywords: ['service', 'services', 'what we do', 'our services', 'offerings', 
+                       'solutions', 'expertise', 'capabilities', 'specialties', 'practice']
+      },
+      products: {
+        urlPatterns: [
+          '/products', '/product', '/catalog', '/portfolio',
+          '/gallery', '/work', '/projects', '/showcase',
+          '/case-studies', '/examples'
+        ],
+        labelKeywords: ['product', 'products', 'catalog', 'portfolio', 'gallery', 
+                       'work', 'projects', 'showcase', 'case study', 'examples']
+      },
+      contact: {
+        urlPatterns: [
+          '/contact', '/contact-us', '/get-in-touch', '/reach-us',
+          '/location', '/locations', '/office', '/offices'
+        ],
+        labelKeywords: ['contact', 'get in touch', 'reach us', 'reach out', 
+                       'connect', 'location', 'office', 'address', 'about us', 'about']
+      }
     };
     
+    // Exclude login/auth pages from mapping
+    const excludedPaths = ['/login', '/signin', '/sign-in', '/auth', '/signup', '/sign-up', '/register', '/account', '/dashboard', '/admin'];
+    
     // Check each link for page patterns
-    for (const link of links) {
+    for (const link of linksWithLabels) {
       try {
-        const linkUrl = new URL(link);
+        const linkUrl = new URL(link.url);
         const pathname = linkUrl.pathname.toLowerCase();
+        const label = link.label.toLowerCase();
+        
+        // Skip login/auth pages
+        const isExcluded = excludedPaths.some(excluded => pathname.includes(excluded)) || 
+                          label.includes('login') || label.includes('sign in') || 
+                          label.includes('sign up') || label.includes('register');
+        if (isExcluded) {
+          continue;
+        }
         
         // Check if link is from same domain
         if (linkUrl.hostname === baseDomain) {
-          // Check for services pages (more flexible matching)
+          // Check for services pages
           if (!pageUrls.services) {
-            for (const pattern of pagePatterns.services) {
-              if (pathname.includes(pattern) || 
-                  pathname.includes(pattern.replace('/', '')) ||
-                  this.fuzzyMatch(pathname, pattern)) {
-                pageUrls.services = link;
+            let matched = false;
+            
+            // First check label keywords (strongest signal)
+            for (const keyword of pagePatterns.services.labelKeywords) {
+              if (label.includes(keyword)) {
+                pageUrls.services = link.url;
+                console.log(`[SCRAPE] Mapped services page by label "${link.label}": ${link.url}`);
+                matched = true;
                 break;
+              }
+            }
+            
+            // If no label match, check URL patterns
+            if (!matched) {
+              for (const pattern of pagePatterns.services.urlPatterns) {
+                if (pathname.includes(pattern) || 
+                    pathname.includes(pattern.replace('/', '')) ||
+                    this.fuzzyMatch(pathname, pattern)) {
+                  pageUrls.services = link.url;
+                  console.log(`[SCRAPE] Mapped services page by URL pattern: ${link.url}`);
+                  break;
+                }
               }
             }
           }
           
-          // Check for products pages (more flexible matching)
+          // Check for products pages
           if (!pageUrls.products) {
-            for (const pattern of pagePatterns.products) {
-              if (pathname.includes(pattern) || 
-                  pathname.includes(pattern.replace('/', '')) ||
-                  this.fuzzyMatch(pathname, pattern)) {
-                pageUrls.products = link;
+            let matched = false;
+            
+            // First check label keywords
+            for (const keyword of pagePatterns.products.labelKeywords) {
+              if (label.includes(keyword)) {
+                pageUrls.products = link.url;
+                console.log(`[SCRAPE] Mapped products page by label "${link.label}": ${link.url}`);
+                matched = true;
                 break;
+              }
+            }
+            
+            // If no label match, check URL patterns
+            if (!matched) {
+              for (const pattern of pagePatterns.products.urlPatterns) {
+                if (pathname.includes(pattern) || 
+                    pathname.includes(pattern.replace('/', '')) ||
+                    this.fuzzyMatch(pathname, pattern)) {
+                  pageUrls.products = link.url;
+                  console.log(`[SCRAPE] Mapped products page by URL pattern: ${link.url}`);
+                  break;
+                }
               }
             }
           }
           
-          // Check for contact pages (more flexible matching)
+          // Check for contact pages
           if (!pageUrls.contact) {
-            for (const pattern of pagePatterns.contact) {
-              if (pathname.includes(pattern) || 
-                  pathname.includes(pattern.replace('/', '')) ||
-                  this.fuzzyMatch(pathname, pattern)) {
-                pageUrls.contact = link;
+            let matched = false;
+            
+            // First check label keywords
+            for (const keyword of pagePatterns.contact.labelKeywords) {
+              if (label.includes(keyword)) {
+                pageUrls.contact = link.url;
+                console.log(`[SCRAPE] Mapped contact page by label "${link.label}": ${link.url}`);
+                matched = true;
                 break;
+              }
+            }
+            
+            // If no label match, check URL patterns
+            if (!matched) {
+              for (const pattern of pagePatterns.contact.urlPatterns) {
+                if (pathname.includes(pattern) || 
+                    pathname.includes(pattern.replace('/', '')) ||
+                    this.fuzzyMatch(pathname, pattern)) {
+                  pageUrls.contact = link.url;
+                  console.log(`[SCRAPE] Mapped contact page by URL pattern: ${link.url}`);
+                  break;
+                }
               }
             }
           }
@@ -758,7 +1227,7 @@ export class ScrapingService {
    * Get all contacts ready to scrape for an upload
    */
   async getReadyToScrapeContacts(uploadId: number, limit?: number) {
-    return this.prisma.contact.findMany({
+    const contacts = await this.prisma.contact.findMany({
       where: {
         csvUploadId: uploadId,
         status: 'ready_to_scrape',
@@ -768,6 +1237,91 @@ export class ScrapingService {
       },
       take: limit,
     });
+
+    // Get latest ScrapedData for each contact to include errorMessage
+    const contactIds = contacts.map(c => c.id);
+    if (contactIds.length === 0) {
+      return contacts;
+    }
+
+    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
+      where: {
+        contactId: { in: contactIds },
+        scrapeSuccess: false,
+      },
+      orderBy: {
+        scrapedAt: 'desc',
+      },
+    });
+
+    // Group by contactId and get the latest one (first in desc order) for each contact
+    const latestScrapedDataMap = new Map<number, any>();
+    for (const sd of allFailedScrapedData) {
+      if (!latestScrapedDataMap.has(sd.contactId)) {
+        latestScrapedDataMap.set(sd.contactId, sd);
+      }
+    }
+
+    // Create a map of contactId -> latest errorMessage
+    const errorMessageMap = new Map(
+      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
+    );
+
+    // Add errorMessage to contacts
+    return contacts.map(contact => ({
+      ...contact,
+      errorMessage: errorMessageMap.get(contact.id) || null,
+    }));
+  }
+
+  /**
+   * Get all contacts for an upload (all statuses) with error messages
+   */
+  async getAllContacts(uploadId: number, limit?: number) {
+    const contacts = await this.prisma.contact.findMany({
+      where: {
+        csvUploadId: uploadId,
+      },
+      orderBy: {
+        scrapePriority: 'asc',
+      },
+      take: limit,
+    });
+
+    // Get latest ScrapedData for each contact to include errorMessage
+    const contactIds = contacts.map(c => c.id);
+    if (contactIds.length === 0) {
+      return contacts;
+    }
+
+    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
+      where: {
+        contactId: { in: contactIds },
+        scrapeSuccess: false,
+      },
+      orderBy: {
+        scrapedAt: 'desc',
+      },
+    });
+
+    // Group by contactId and get the latest one (first in desc order) for each contact
+    const latestScrapedDataMap = new Map<number, any>();
+    for (const sd of allFailedScrapedData) {
+      if (!latestScrapedDataMap.has(sd.contactId)) {
+        latestScrapedDataMap.set(sd.contactId, sd);
+      }
+    }
+
+    // Create a map of contactId -> latest errorMessage
+    const errorMessageMap = new Map(
+      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
+    );
+
+    // Add errorMessage to contacts
+    return contacts.map(contact => ({
+      ...contact,
+      errorMessage: errorMessageMap.get(contact.id) || null,
+    }));
   }
 
   /**

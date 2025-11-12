@@ -267,7 +267,7 @@ export class IngestionService {
       where.valid = filters.valid;
     }
     
-    return await this.prisma.contact.findMany({
+    const contacts = await this.prisma.contact.findMany({
       where,
       take: filters?.limit || 50,
       orderBy: { createdAt: 'desc' },
@@ -281,5 +281,40 @@ export class IngestionService {
         },
       },
     });
+
+    // Get latest ScrapedData for each contact to include errorMessage
+    const contactIds = contacts.map(c => c.id);
+    if (contactIds.length === 0) {
+      return contacts;
+    }
+
+    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
+      where: {
+        contactId: { in: contactIds },
+        scrapeSuccess: false,
+      },
+      orderBy: {
+        scrapedAt: 'desc',
+      },
+    });
+
+    // Group by contactId and get the latest one (first in desc order) for each contact
+    const latestScrapedDataMap = new Map<number, any>();
+    for (const sd of allFailedScrapedData) {
+      if (!latestScrapedDataMap.has(sd.contactId)) {
+        latestScrapedDataMap.set(sd.contactId, sd);
+      }
+    }
+
+    // Create a map of contactId -> latest errorMessage
+    const errorMessageMap = new Map(
+      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
+    );
+
+    // Add errorMessage to contacts
+    return contacts.map(contact => ({
+      ...contact,
+      errorMessage: errorMessageMap.get(contact.id) || null,
+    }));
   }
 }
