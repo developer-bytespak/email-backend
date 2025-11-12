@@ -1,7 +1,11 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { ValidationService } from '../validation/validation.service';
 import { Readable } from 'stream';
+import { Prisma, Contact as PrismaContact, ContactStatus } from '@prisma/client';
+import { GetContactsQueryDto } from './dto/get-contacts-query.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
+import { BulkUpdateContactsDto, BulkUpdateResult } from './dto/bulk-update-contacts.dto';
 import csv = require('csv-parser');
 
 interface CsvRow {
@@ -19,12 +23,113 @@ interface CsvRow {
   country?: string;
 }
 
+type ContactWithUpload = PrismaContact & {
+  csvUpload?: {
+    id: number;
+    fileName: string;
+    createdAt: Date;
+  };
+};
+
 @Injectable()
 export class IngestionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly validationService: ValidationService,
   ) {}
+
+  private computeContactValidity(contact: { emailValid: boolean; phone: string | null }) {
+    const phone = contact.phone?.trim() ?? '';
+    const hasPhone = phone.length > 0;
+    const emailValid = contact.emailValid === true;
+
+    if (emailValid && hasPhone) {
+      return { isValid: true, reason: 'Valid email and phone number present' };
+    }
+
+    if (emailValid) {
+      return { isValid: true, reason: 'Valid email address present' };
+    }
+
+    if (hasPhone) {
+      return { isValid: true, reason: 'Phone number present (email not validated)' };
+    }
+
+    return { isValid: false, reason: 'Missing valid email and phone number' };
+  }
+
+  private mapContact(contact: ContactWithUpload) {
+    const computed = this.computeContactValidity(contact);
+
+    return {
+      ...contact,
+      computedValid: computed.isValid,
+      computedValidationReason: computed.reason,
+    };
+  }
+
+  private buildContactsWhere(clientId: number, query: GetContactsQueryDto): Prisma.ContactWhereInput {
+    const where: Prisma.ContactWhereInput = {
+      csvUpload: {
+        clientId,
+      },
+    };
+
+    if (query.csvUploadId) {
+      where.csvUploadId = query.csvUploadId;
+    }
+
+    if (query.status) {
+      where.status = query.status;
+    }
+
+    if (query.search) {
+      const search = query.search.trim();
+      if (search.length > 0) {
+        where.OR = [
+          { businessName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+          { email: { contains: search, mode: Prisma.QueryMode.insensitive } },
+          { phone: { contains: search, mode: Prisma.QueryMode.insensitive } },
+        ];
+      }
+    }
+
+    const andConditions: Prisma.ContactWhereInput[] = Array.isArray(where.AND)
+      ? [...where.AND]
+      : where.AND
+      ? [where.AND]
+      : [];
+
+    if (query.validOnly) {
+      andConditions.push({
+        OR: [
+          { emailValid: true },
+          {
+            AND: [
+              { phone: { not: null } },
+              { phone: { not: '' } },
+            ],
+          },
+        ],
+      });
+    }
+
+    if (query.invalidOnly) {
+      andConditions.push({ emailValid: false });
+      andConditions.push({
+        OR: [
+          { phone: null },
+          { phone: '' },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
+    }
+
+    return where;
+  }
 
   async processCsvUpload(file: any, clientId: number) {
     if (!file || !file.buffer) {
@@ -243,7 +348,8 @@ export class IngestionService {
   }
 
   /**
-   * Get all contacts for a client (across all CSV uploads)
+   * Legacy helper: list contacts across uploads for a client (limited filtering).
+   * If limit is not provided, returns all contacts for the client.
    */
   async getAllClientContacts(
     clientId: number,
@@ -251,25 +357,24 @@ export class IngestionService {
       limit?: number;
       status?: string;
       valid?: boolean;
-    }
-  ): Promise<any[]> {
-    const where: any = {
+    },
+  ): Promise<ContactWithUpload[]> {
+    const where: Prisma.ContactWhereInput = {
       csvUpload: {
-        clientId,  // Filter by client through csvUpload relation
+        clientId,
       },
     };
-    
-    // Optional filters
+
     if (filters?.status) {
-      where.status = filters.status;
+      where.status = filters.status as ContactStatus;
     }
+
     if (filters?.valid !== undefined) {
       where.valid = filters.valid;
     }
-    
-    return await this.prisma.contact.findMany({
+
+    const queryOptions: Prisma.ContactFindManyArgs = {
       where,
-      take: filters?.limit || 50,
       orderBy: { createdAt: 'desc' },
       include: {
         csvUpload: {
@@ -280,6 +385,296 @@ export class IngestionService {
           },
         },
       },
+    };
+
+    // Only apply limit if explicitly provided
+    if (filters?.limit !== undefined && filters.limit > 0) {
+      queryOptions.take = filters.limit;
+    }
+
+    const contacts = await this.prisma.contact.findMany(queryOptions);
+
+    return contacts as ContactWithUpload[];
+  }
+
+  async listContacts(clientId: number, query: GetContactsQueryDto) {
+    const page = query.page && query.page > 0 ? query.page : 1;
+    const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 25;
+    const skip = (page - 1) * limit;
+
+    const where = this.buildContactsWhere(clientId, query);
+
+    const [total, contacts] = await this.prisma.$transaction([
+      this.prisma.contact.count({ where }),
+      this.prisma.contact.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        include: {
+          csvUpload: {
+            select: {
+              id: true,
+              fileName: true,
+              createdAt: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      data: contacts.map((contact) => this.mapContact(contact)),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  async getContactById(clientId: number, contactId: number) {
+    const contact = await this.prisma.contact.findFirst({
+      where: {
+        id: contactId,
+        csvUpload: {
+          clientId,
+        },
+      },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
+      },
     });
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${contactId} not found`);
+    }
+
+    return this.mapContact(contact);
+  }
+
+  async updateContact(clientId: number, contactId: number, dto: UpdateContactDto) {
+    const existing = await this.prisma.contact.findFirst({
+      where: {
+        id: contactId,
+        csvUpload: {
+          clientId,
+        },
+      },
+    });
+
+    if (!existing) {
+      throw new NotFoundException(`Contact with ID ${contactId} not found`);
+    }
+
+    const normalizedEmail = this.normalizeNullableField(dto.email);
+    const payload = this.normalizeContactUpdate(dto);
+
+    await this.prisma.contact.update({
+      where: { id: contactId },
+      data: payload,
+    });
+
+    let emailValid = existing.emailValid;
+    if (normalizedEmail !== undefined) {
+      emailValid = normalizedEmail
+        ? await this.validationService.validateEmail(normalizedEmail)
+        : false;
+
+      await this.prisma.contact.update({
+        where: { id: contactId },
+        data: {
+          emailValid,
+        },
+      });
+    }
+
+    const refreshed = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!refreshed) {
+      throw new NotFoundException(`Contact with ID ${contactId} not found after update`);
+    }
+
+    const computed = this.computeContactValidity(refreshed);
+
+    await this.prisma.contact.update({
+      where: { id: contactId },
+      data: {
+        valid: computed.isValid,
+        validationReason: computed.reason,
+      },
+    });
+
+    return this.mapContact({
+      ...refreshed,
+      valid: computed.isValid,
+      validationReason: computed.reason,
+    });
+  }
+
+  async bulkUpdateContacts(clientId: number, dto: BulkUpdateContactsDto): Promise<BulkUpdateResult> {
+    const updated: any[] = [];
+    const failed: { id: number; error: string }[] = [];
+
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const item of dto.contacts) {
+          try {
+            const existing = await tx.contact.findFirst({
+              where: {
+                id: item.id,
+                csvUpload: {
+                  clientId,
+                },
+              },
+            });
+
+            if (!existing) {
+              throw new NotFoundException(`Contact ${item.id} not found`);
+            }
+
+            const normalizedEmail = this.normalizeNullableField(item.email);
+            const payload = this.normalizeContactUpdate(item);
+
+            await tx.contact.update({
+              where: { id: item.id },
+              data: payload,
+            });
+
+            let emailValid = existing.emailValid;
+            if (normalizedEmail !== undefined) {
+              emailValid = normalizedEmail
+                ? await this.validationService.validateEmail(normalizedEmail)
+                : false;
+
+              await tx.contact.update({
+                where: { id: item.id },
+                data: {
+                  emailValid,
+                },
+              });
+            }
+
+            const refreshed = await tx.contact.findUnique({
+              where: { id: item.id },
+            });
+
+            if (!refreshed) {
+              throw new NotFoundException(`Contact ${item.id} not found after update`);
+            }
+
+            const computed = this.computeContactValidity(refreshed);
+
+            const finalContact = await tx.contact.update({
+              where: { id: item.id },
+              data: {
+                valid: computed.isValid,
+                validationReason: computed.reason,
+              },
+              include: {
+                csvUpload: {
+                  select: {
+                    id: true,
+                    fileName: true,
+                    createdAt: true,
+                  },
+                },
+              },
+            });
+
+            updated.push(this.mapContact(finalContact));
+          } catch (error: any) {
+            failed.push({
+              id: item.id,
+              error: error?.message ?? 'Unknown error',
+            });
+          }
+        }
+      },
+      { timeout: 30_000 },
+    );
+
+    return {
+      updated,
+      failed,
+    };
+  }
+
+  private normalizeNullableField(value?: string | null) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const trimmed = value?.trim() ?? '';
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private normalizeRequiredField(value?: string | null) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    const trimmed = value?.trim() ?? '';
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private normalizeContactUpdate(dto: UpdateContactDto | BulkUpdateContactsDto['contacts'][number]) {
+    const data: Prisma.ContactUpdateInput = {};
+
+    const normalizedBusinessName = this.normalizeRequiredField(dto.businessName);
+    if (normalizedBusinessName !== undefined) {
+      data.businessName = normalizedBusinessName;
+    }
+
+    const normalizedEmail = this.normalizeNullableField(dto.email);
+    if (normalizedEmail !== undefined) {
+      data.email = normalizedEmail;
+    }
+
+    const normalizedPhone = this.normalizeNullableField(dto.phone);
+    if (normalizedPhone !== undefined) {
+      data.phone = normalizedPhone;
+    }
+
+    const normalizedWebsite = this.normalizeNullableField(dto.website);
+    if (normalizedWebsite !== undefined) {
+      data.website = normalizedWebsite;
+    }
+
+    const normalizedState = this.normalizeNullableField(dto.state);
+    if (normalizedState !== undefined) {
+      data.state = normalizedState;
+    }
+
+    const normalizedZip = this.normalizeNullableField(dto.zipCode);
+    if (normalizedZip !== undefined) {
+      data.zipCode = normalizedZip;
+    }
+
+    if (dto.status !== undefined && dto.status) {
+      data.status = dto.status;
+    }
+
+    return data;
   }
 }

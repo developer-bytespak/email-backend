@@ -1,7 +1,28 @@
-import { Controller, Post, Get, UploadedFile, UseInterceptors, Body, UseGuards, Request, Param, Query, ParseIntPipe, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  UploadedFile,
+  UseInterceptors,
+  Body,
+  UseGuards,
+  Request,
+  Param,
+  Query,
+  ParseIntPipe,
+  NotFoundException,
+  ForbiddenException,
+  Patch,
+  BadRequestException,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IngestionService } from './ingestion.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { GetContactsQueryDto } from './dto/get-contacts-query.dto';
+import { UpdateContactDto } from './dto/update-contact.dto';
+import { BulkUpdateContactsDto } from './dto/bulk-update-contacts.dto';
+import { ClassConstructor, plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 
 @Controller('ingestion')
 export class IngestionController {
@@ -64,6 +85,15 @@ export class IngestionController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('contacts')
+  async listContacts(@Request() req, @Query() query: GetContactsQueryDto) {
+    const clientId = req.user.id;
+    const validatedQuery = this.validateDto(query, GetContactsQueryDto);
+
+    return this.ingestionService.listContacts(clientId, validatedQuery);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('contacts/all')
   async getAllClientContacts(
     @Request() req,
@@ -72,19 +102,73 @@ export class IngestionController {
     @Query('valid') valid?: string,
   ) {
     const clientId = req.user.id;
-    
-    const parsedLimit = limit ? parseInt(limit, 10) : 50;
-    
+    // Only parse limit if provided; undefined means return all contacts
+    const parsedLimit = limit ? parseInt(limit, 10) : undefined;
+
     const contacts = await this.ingestionService.getAllClientContacts(clientId, {
       limit: parsedLimit,
       status,
       valid: valid === 'true' ? true : valid === 'false' ? false : undefined,
     });
-    
+
     return {
       message: 'All client contacts retrieved successfully',
       count: contacts.length,
       contacts,
     };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('contacts/:id')
+  async getContact(
+    @Request() req,
+    @Param('id', ParseIntPipe) contactId: number,
+  ) {
+    const clientId = req.user.id;
+    return this.ingestionService.getContactById(clientId, contactId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('contacts/bulk')
+  async bulkUpdateContacts(
+    @Request() req,
+    @Body() body: BulkUpdateContactsDto,
+  ) {
+    const clientId = req.user.id;
+    const validatedBody = this.validateDto(body, BulkUpdateContactsDto);
+
+    return this.ingestionService.bulkUpdateContacts(clientId, validatedBody);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('contacts/:id')
+  async updateContact(
+    @Request() req,
+    @Param('id', ParseIntPipe) contactId: number,
+    @Body() body: UpdateContactDto,
+  ) {
+    const clientId = req.user.id;
+    const validatedBody = this.validateDto(body, UpdateContactDto);
+
+    return this.ingestionService.updateContact(clientId, contactId, validatedBody);
+  }
+
+  private validateDto<T>(payload: unknown, dtoClass: ClassConstructor<T>): T {
+    const instance = plainToInstance(dtoClass, payload);
+    const errors = validateSync(instance as object, {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+
+    if (errors.length > 0) {
+      const messages = errors
+        .map((error) => Object.values(error.constraints ?? {}))
+        .flat()
+        .join(', ');
+
+      throw new BadRequestException(messages || 'Validation failed');
+    }
+
+    return instance;
   }
 }
