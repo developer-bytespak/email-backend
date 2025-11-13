@@ -68,6 +68,54 @@ export class IngestionService {
     };
   }
 
+  private normalizeNullableField(value: string | null | undefined): string | null | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (value === null || value.trim() === '') {
+      return null;
+    }
+    return value.trim();
+  }
+
+  private normalizeContactUpdate(dto: UpdateContactDto): Prisma.ContactUpdateInput {
+    const payload: Prisma.ContactUpdateInput = {};
+
+    if (dto.businessName !== undefined) {
+      payload.businessName = dto.businessName.trim();
+    }
+
+    if (dto.email !== undefined) {
+      payload.email = this.normalizeNullableField(dto.email);
+    }
+
+    if (dto.phone !== undefined) {
+      payload.phone = this.normalizeNullableField(dto.phone);
+    }
+
+    if (dto.website !== undefined) {
+      payload.website = this.normalizeNullableField(dto.website);
+    }
+
+    if (dto.state !== undefined) {
+      payload.state = this.normalizeNullableField(dto.state);
+    }
+
+    if (dto.zipCode !== undefined) {
+      payload.zipCode = this.normalizeNullableField(dto.zipCode);
+    }
+
+    if (dto.status !== undefined) {
+      payload.status = dto.status;
+    }
+
+    // Explicitly exclude valid and validationReason from updates
+    // These fields are managed by the validation service only
+    // For contact updates, we only update email and phone fields
+
+    return payload;
+  }
+
   private buildContactsWhere(clientId: number, query: GetContactsQueryDto): Prisma.ContactWhereInput {
     const where: Prisma.ContactWhereInput = {
       csvUpload: {
@@ -115,11 +163,22 @@ export class IngestionService {
     }
 
     if (query.invalidOnly) {
-      andConditions.push({ emailValid: false });
+      // Invalid contacts are those with no email AND no phone
+      // This matches the frontend logic where validity is based on email/phone presence
       andConditions.push({
-        OR: [
-          { phone: null },
-          { phone: '' },
+        AND: [
+          {
+            OR: [
+              { email: null },
+              { email: '' },
+            ],
+          },
+          {
+            OR: [
+              { phone: null },
+              { phone: '' },
+            ],
+          },
         ],
       });
     }
@@ -476,17 +535,20 @@ export class IngestionService {
       throw new NotFoundException(`Contact with ID ${contactId} not found`);
     }
 
+    // Normalize the update payload
     const normalizedEmail = this.normalizeNullableField(dto.email);
     const payload = this.normalizeContactUpdate(dto);
 
+    // Update the contact fields first
     await this.prisma.contact.update({
       where: { id: contactId },
       data: payload,
     });
 
-    let emailValid = existing.emailValid;
+    // If email was updated, validate it and update emailValid
+    // Note: We update emailValid but NOT valid/validationReason (those are managed by validation service)
     if (normalizedEmail !== undefined) {
-      emailValid = normalizedEmail
+      const emailValid = normalizedEmail
         ? await this.validationService.validateEmail(normalizedEmail)
         : false;
 
@@ -498,7 +560,8 @@ export class IngestionService {
       });
     }
 
-    const refreshed = await this.prisma.contact.findUnique({
+    // Get the updated contact with all relations
+    const updated = await this.prisma.contact.findUnique({
       where: { id: contactId },
       include: {
         csvUpload: {
@@ -511,53 +574,38 @@ export class IngestionService {
       },
     });
 
-    if (!refreshed) {
+    if (!updated) {
       throw new NotFoundException(`Contact with ID ${contactId} not found after update`);
     }
 
-    const computed = this.computeContactValidity(refreshed);
+    return this.mapContact(updated);
+  }
 
-    await this.prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        valid: computed.isValid,
-        validationReason: computed.reason,
-      },
-    });
+  async bulkUpdateContacts(
+    clientId: number,
+    dto: BulkUpdateContactsDto,
+  ): Promise<BulkUpdateResult> {
+    const updated: any[] = [];
+    const failed: { id: number; error: string }[] = [];
 
-    // Get latest ScrapedData for each contact to include errorMessage
-    const contactIds = contacts.map(c => c.id);
-    if (contactIds.length === 0) {
-      return contacts;
-    }
-
-    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
-      where: {
-        contactId: { in: contactIds },
-        scrapeSuccess: false,
-      },
-      orderBy: {
-        scrapedAt: 'desc',
-      },
-    });
-
-    // Group by contactId and get the latest one (first in desc order) for each contact
-    const latestScrapedDataMap = new Map<number, any>();
-    for (const sd of allFailedScrapedData) {
-      if (!latestScrapedDataMap.has(sd.contactId)) {
-        latestScrapedDataMap.set(sd.contactId, sd);
+    // Process each contact update
+    for (const contactUpdate of dto.contacts) {
+      try {
+        // Extract id and create UpdateContactDto without id
+        const { id, ...updateDto } = contactUpdate;
+        const updatedContact = await this.updateContact(clientId, id, updateDto);
+        updated.push(updatedContact);
+      } catch (error) {
+        failed.push({
+          id: contactUpdate.id,
+          error: error.message || 'Update failed',
+        });
       }
     }
 
-    // Create a map of contactId -> latest errorMessage
-    const errorMessageMap = new Map(
-      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
-    );
-
-    // Add errorMessage to contacts
-    return contacts.map(contact => ({
-      ...contact,
-      errorMessage: errorMessageMap.get(contact.id) || null,
-    }));
+    return {
+      updated,
+      failed,
+    };
   }
 }
