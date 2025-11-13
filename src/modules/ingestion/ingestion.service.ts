@@ -149,9 +149,15 @@ export class IngestionService {
       : [];
 
     if (query.validOnly) {
+      // Valid contacts are those with email OR phone (matches frontend logic)
       andConditions.push({
         OR: [
-          { emailValid: true },
+          {
+            AND: [
+              { email: { not: null } },
+              { email: { not: '' } },
+            ],
+          },
           {
             AND: [
               { phone: { not: null } },
@@ -170,13 +176,13 @@ export class IngestionService {
           {
             OR: [
               { email: null },
-              { email: '' },
+              { email: { equals: '' } },
             ],
           },
           {
             OR: [
               { phone: null },
-              { phone: '' },
+              { phone: { equals: '' } },
             ],
           },
         ],
@@ -463,8 +469,80 @@ export class IngestionService {
 
     const where = this.buildContactsWhere(clientId, query);
 
-    const [total, contacts] = await this.prisma.$transaction([
+    // Build base where clause for total counts (without validity filters)
+    const baseWhere: Prisma.ContactWhereInput = {
+      csvUpload: {
+        clientId,
+      },
+    };
+
+    if (query.csvUploadId) {
+      baseWhere.csvUploadId = query.csvUploadId;
+    }
+
+    if (query.status) {
+      baseWhere.status = query.status;
+    }
+
+    if (query.search) {
+      const search = query.search.trim();
+      if (search.length > 0) {
+        baseWhere.OR = [
+          { businessName: { contains: search, mode: Prisma.QueryMode.insensitive } },
+          { email: { contains: search, mode: Prisma.QueryMode.insensitive } },
+          { phone: { contains: search, mode: Prisma.QueryMode.insensitive } },
+        ];
+      }
+    }
+
+    // Calculate total valid and invalid counts (across all pages, independent of validity filter)
+    // Total should be calculated from baseWhere (without validity filters) to show all contacts
+    // FilteredTotal is for pagination (with validity filters applied)
+    const [total, filteredTotal, totalValid, totalInvalid, contacts] = await this.prisma.$transaction([
+      // Total all contacts (without validity filters) - for display
+      this.prisma.contact.count({ where: baseWhere }),
+      // Filtered total (with validity filters) - for pagination
       this.prisma.contact.count({ where }),
+      // Total valid: contacts with email OR phone
+      this.prisma.contact.count({
+        where: {
+          ...baseWhere,
+          OR: [
+            {
+              AND: [
+                { email: { not: null } },
+                { email: { not: '' } },
+              ],
+            },
+            {
+              AND: [
+                { phone: { not: null } },
+                { phone: { not: '' } },
+              ],
+            },
+          ],
+        },
+      }),
+      // Total invalid: contacts with no email AND no phone
+      this.prisma.contact.count({
+        where: {
+          ...baseWhere,
+          AND: [
+            {
+              OR: [
+                { email: null },
+                { email: { equals: '' } },
+              ],
+            },
+            {
+              OR: [
+                { phone: null },
+                { phone: { equals: '' } },
+              ],
+            },
+          ],
+        },
+      }),
       this.prisma.contact.findMany({
         where,
         skip,
@@ -489,8 +567,10 @@ export class IngestionService {
       meta: {
         page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit) || 1,
+        total, // All contacts (for display card)
+        totalPages: Math.ceil(filteredTotal / limit) || 1, // Based on filtered results
+        totalValid,
+        totalInvalid,
       },
     };
   }
