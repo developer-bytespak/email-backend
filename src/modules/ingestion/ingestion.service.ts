@@ -68,6 +68,54 @@ export class IngestionService {
     };
   }
 
+  private normalizeNullableField(value: string | null | undefined): string | null | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+    if (value === null || value.trim() === '') {
+      return null;
+    }
+    return value.trim();
+  }
+
+  private normalizeContactUpdate(dto: UpdateContactDto): Prisma.ContactUpdateInput {
+    const payload: Prisma.ContactUpdateInput = {};
+
+    if (dto.businessName !== undefined) {
+      payload.businessName = dto.businessName.trim();
+    }
+
+    if (dto.email !== undefined) {
+      payload.email = this.normalizeNullableField(dto.email);
+    }
+
+    if (dto.phone !== undefined) {
+      payload.phone = this.normalizeNullableField(dto.phone);
+    }
+
+    if (dto.website !== undefined) {
+      payload.website = this.normalizeNullableField(dto.website);
+    }
+
+    if (dto.state !== undefined) {
+      payload.state = this.normalizeNullableField(dto.state);
+    }
+
+    if (dto.zipCode !== undefined) {
+      payload.zipCode = this.normalizeNullableField(dto.zipCode);
+    }
+
+    if (dto.status !== undefined) {
+      payload.status = dto.status;
+    }
+
+    if (dto.valid !== undefined) {
+      payload.valid = dto.valid;
+    }
+
+    return payload;
+  }
+
   private buildContactsWhere(clientId: number, query: GetContactsQueryDto): Prisma.ContactWhereInput {
     const where: Prisma.ContactWhereInput = {
       csvUpload: {
@@ -525,39 +573,52 @@ export class IngestionService {
       },
     });
 
-    // Get latest ScrapedData for each contact to include errorMessage
-    const contactIds = contacts.map(c => c.id);
-    if (contactIds.length === 0) {
-      return contacts;
-    }
-
-    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
-      where: {
-        contactId: { in: contactIds },
-        scrapeSuccess: false,
-      },
-      orderBy: {
-        scrapedAt: 'desc',
+    // Get the final updated contact with all relations
+    const finalContact = await this.prisma.contact.findUnique({
+      where: { id: contactId },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
-    // Group by contactId and get the latest one (first in desc order) for each contact
-    const latestScrapedDataMap = new Map<number, any>();
-    for (const sd of allFailedScrapedData) {
-      if (!latestScrapedDataMap.has(sd.contactId)) {
-        latestScrapedDataMap.set(sd.contactId, sd);
+    if (!finalContact) {
+      throw new NotFoundException(`Contact with ID ${contactId} not found after final update`);
+    }
+
+    return this.mapContact(finalContact);
+  }
+
+  async bulkUpdateContacts(
+    clientId: number,
+    dto: BulkUpdateContactsDto,
+  ): Promise<BulkUpdateResult> {
+    const updated: any[] = [];
+    const failed: { id: number; error: string }[] = [];
+
+    // Process each contact update
+    for (const contactUpdate of dto.contacts) {
+      try {
+        // Extract id and create UpdateContactDto without id
+        const { id, ...updateDto } = contactUpdate;
+        const updatedContact = await this.updateContact(clientId, id, updateDto);
+        updated.push(updatedContact);
+      } catch (error) {
+        failed.push({
+          id: contactUpdate.id,
+          error: error.message || 'Update failed',
+        });
       }
     }
 
-    // Create a map of contactId -> latest errorMessage
-    const errorMessageMap = new Map(
-      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
-    );
-
-    // Add errorMessage to contacts
-    return contacts.map(contact => ({
-      ...contact,
-      errorMessage: errorMessageMap.get(contact.id) || null,
-    }));
+    return {
+      updated,
+      failed,
+    };
   }
 }
