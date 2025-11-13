@@ -109,9 +109,9 @@ export class IngestionService {
       payload.status = dto.status;
     }
 
-    if (dto.valid !== undefined) {
-      payload.valid = dto.valid;
-    }
+    // Explicitly exclude valid and validationReason from updates
+    // These fields are managed by the validation service only
+    // For contact updates, we only update email and phone fields
 
     return payload;
   }
@@ -163,11 +163,22 @@ export class IngestionService {
     }
 
     if (query.invalidOnly) {
-      andConditions.push({ emailValid: false });
+      // Invalid contacts are those with no email AND no phone
+      // This matches the frontend logic where validity is based on email/phone presence
       andConditions.push({
-        OR: [
-          { phone: null },
-          { phone: '' },
+        AND: [
+          {
+            OR: [
+              { email: null },
+              { email: '' },
+            ],
+          },
+          {
+            OR: [
+              { phone: null },
+              { phone: '' },
+            ],
+          },
         ],
       });
     }
@@ -524,17 +535,20 @@ export class IngestionService {
       throw new NotFoundException(`Contact with ID ${contactId} not found`);
     }
 
+    // Normalize the update payload
     const normalizedEmail = this.normalizeNullableField(dto.email);
     const payload = this.normalizeContactUpdate(dto);
 
+    // Update the contact fields first
     await this.prisma.contact.update({
       where: { id: contactId },
       data: payload,
     });
 
-    let emailValid = existing.emailValid;
+    // If email was updated, validate it and update emailValid
+    // Note: We update emailValid but NOT valid/validationReason (those are managed by validation service)
     if (normalizedEmail !== undefined) {
-      emailValid = normalizedEmail
+      const emailValid = normalizedEmail
         ? await this.validationService.validateEmail(normalizedEmail)
         : false;
 
@@ -546,7 +560,8 @@ export class IngestionService {
       });
     }
 
-    const refreshed = await this.prisma.contact.findUnique({
+    // Get the updated contact with all relations
+    const updated = await this.prisma.contact.findUnique({
       where: { id: contactId },
       include: {
         csvUpload: {
@@ -559,39 +574,11 @@ export class IngestionService {
       },
     });
 
-    if (!refreshed) {
+    if (!updated) {
       throw new NotFoundException(`Contact with ID ${contactId} not found after update`);
     }
 
-    const computed = this.computeContactValidity(refreshed);
-
-    await this.prisma.contact.update({
-      where: { id: contactId },
-      data: {
-        valid: computed.isValid,
-        validationReason: computed.reason,
-      },
-    });
-
-    // Get the final updated contact with all relations
-    const finalContact = await this.prisma.contact.findUnique({
-      where: { id: contactId },
-      include: {
-        csvUpload: {
-          select: {
-            id: true,
-            fileName: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
-
-    if (!finalContact) {
-      throw new NotFoundException(`Contact with ID ${contactId} not found after final update`);
-    }
-
-    return this.mapContact(finalContact);
+    return this.mapContact(updated);
   }
 
   async bulkUpdateContacts(
