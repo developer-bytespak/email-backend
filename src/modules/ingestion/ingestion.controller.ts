@@ -14,6 +14,7 @@ import {
   ForbiddenException,
   Patch,
   BadRequestException,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IngestionService } from './ingestion.service';
@@ -86,11 +87,19 @@ export class IngestionController {
 
   @UseGuards(JwtAuthGuard)
   @Get('contacts')
-  async listContacts(@Request() req, @Query() query: GetContactsQueryDto) {
+  async listContacts(@Request() req, @Query() query: GetContactsQueryDto, @Res() res: any) {
     const clientId = req.user.id;
     const validatedQuery = this.validateDto(query, GetContactsQueryDto);
 
-    return this.ingestionService.listContacts(clientId, validatedQuery);
+    // Disable caching for this endpoint to ensure fresh data
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+
+    const result = await this.ingestionService.listContacts(clientId, validatedQuery);
+    return res.json(result);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -154,7 +163,9 @@ export class IngestionController {
   }
 
   private validateDto<T>(payload: unknown, dtoClass: ClassConstructor<T>): T {
-    const instance = plainToInstance(dtoClass, payload);
+    const instance = plainToInstance(dtoClass, payload, {
+      enableImplicitConversion: true,
+    });
     const errors = validateSync(instance as object, {
       whitelist: true,
       forbidNonWhitelisted: true,
