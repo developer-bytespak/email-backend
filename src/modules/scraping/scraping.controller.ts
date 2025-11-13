@@ -94,7 +94,29 @@ import {
         contacts,
       };
     }
-  
+
+    /**
+     * Get all contacts for an upload (all statuses)
+     * GET /scraping/all/:uploadId?limit=20
+     */
+    @Get('all/:uploadId')
+    async getAllContacts(
+      @Param('uploadId', ParseIntPipe) uploadId: number,
+      @Query('limit', ParseIntPipe) limit?: number,
+    ) {
+      const contacts = await this.scrapingService.getAllContacts(
+        uploadId,
+        limit,
+      );
+      
+      return {
+        message: 'All contacts retrieved successfully',
+        uploadId,
+        count: contacts.length,
+        contacts,
+      };
+    }
+
     /**
      * Reset a contact's scraping status (for retry)
      * POST /scraping/reset/:contactId

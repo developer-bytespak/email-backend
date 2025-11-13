@@ -525,156 +525,39 @@ export class IngestionService {
       },
     });
 
-    return this.mapContact({
-      ...refreshed,
-      valid: computed.isValid,
-      validationReason: computed.reason,
-    });
-  }
+    // Get latest ScrapedData for each contact to include errorMessage
+    const contactIds = contacts.map(c => c.id);
+    if (contactIds.length === 0) {
+      return contacts;
+    }
 
-  async bulkUpdateContacts(clientId: number, dto: BulkUpdateContactsDto): Promise<BulkUpdateResult> {
-    const updated: any[] = [];
-    const failed: { id: number; error: string }[] = [];
-
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const item of dto.contacts) {
-          try {
-            const existing = await tx.contact.findFirst({
-              where: {
-                id: item.id,
-                csvUpload: {
-                  clientId,
-                },
-              },
-            });
-
-            if (!existing) {
-              throw new NotFoundException(`Contact ${item.id} not found`);
-            }
-
-            const normalizedEmail = this.normalizeNullableField(item.email);
-            const payload = this.normalizeContactUpdate(item);
-
-            await tx.contact.update({
-              where: { id: item.id },
-              data: payload,
-            });
-
-            let emailValid = existing.emailValid;
-            if (normalizedEmail !== undefined) {
-              emailValid = normalizedEmail
-                ? await this.validationService.validateEmail(normalizedEmail)
-                : false;
-
-              await tx.contact.update({
-                where: { id: item.id },
-                data: {
-                  emailValid,
-                },
-              });
-            }
-
-            const refreshed = await tx.contact.findUnique({
-              where: { id: item.id },
-            });
-
-            if (!refreshed) {
-              throw new NotFoundException(`Contact ${item.id} not found after update`);
-            }
-
-            const computed = this.computeContactValidity(refreshed);
-
-            const finalContact = await tx.contact.update({
-              where: { id: item.id },
-              data: {
-                valid: computed.isValid,
-                validationReason: computed.reason,
-              },
-              include: {
-                csvUpload: {
-                  select: {
-                    id: true,
-                    fileName: true,
-                    createdAt: true,
-                  },
-                },
-              },
-            });
-
-            updated.push(this.mapContact(finalContact));
-          } catch (error: any) {
-            failed.push({
-              id: item.id,
-              error: error?.message ?? 'Unknown error',
-            });
-          }
-        }
+    const allFailedScrapedData = await this.prisma.scrapedData.findMany({
+      where: {
+        contactId: { in: contactIds },
+        scrapeSuccess: false,
       },
-      { timeout: 30_000 },
+      orderBy: {
+        scrapedAt: 'desc',
+      },
+    });
+
+    // Group by contactId and get the latest one (first in desc order) for each contact
+    const latestScrapedDataMap = new Map<number, any>();
+    for (const sd of allFailedScrapedData) {
+      if (!latestScrapedDataMap.has(sd.contactId)) {
+        latestScrapedDataMap.set(sd.contactId, sd);
+      }
+    }
+
+    // Create a map of contactId -> latest errorMessage
+    const errorMessageMap = new Map(
+      Array.from(latestScrapedDataMap.values()).map(sd => [sd.contactId, sd.errorMessage])
     );
 
-    return {
-      updated,
-      failed,
-    };
-  }
-
-  private normalizeNullableField(value?: string | null) {
-    if (value === undefined) {
-      return undefined;
-    }
-
-    const trimmed = value?.trim() ?? '';
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  private normalizeRequiredField(value?: string | null) {
-    if (value === undefined) {
-      return undefined;
-    }
-
-    const trimmed = value?.trim() ?? '';
-    return trimmed.length > 0 ? trimmed : undefined;
-  }
-
-  private normalizeContactUpdate(dto: UpdateContactDto | BulkUpdateContactsDto['contacts'][number]) {
-    const data: Prisma.ContactUpdateInput = {};
-
-    const normalizedBusinessName = this.normalizeRequiredField(dto.businessName);
-    if (normalizedBusinessName !== undefined) {
-      data.businessName = normalizedBusinessName;
-    }
-
-    const normalizedEmail = this.normalizeNullableField(dto.email);
-    if (normalizedEmail !== undefined) {
-      data.email = normalizedEmail;
-    }
-
-    const normalizedPhone = this.normalizeNullableField(dto.phone);
-    if (normalizedPhone !== undefined) {
-      data.phone = normalizedPhone;
-    }
-
-    const normalizedWebsite = this.normalizeNullableField(dto.website);
-    if (normalizedWebsite !== undefined) {
-      data.website = normalizedWebsite;
-    }
-
-    const normalizedState = this.normalizeNullableField(dto.state);
-    if (normalizedState !== undefined) {
-      data.state = normalizedState;
-    }
-
-    const normalizedZip = this.normalizeNullableField(dto.zipCode);
-    if (normalizedZip !== undefined) {
-      data.zipCode = normalizedZip;
-    }
-
-    if (dto.status !== undefined && dto.status) {
-      data.status = dto.status;
-    }
-
-    return data;
+    // Add errorMessage to contacts
+    return contacts.map(contact => ({
+      ...contact,
+      errorMessage: errorMessageMap.get(contact.id) || null,
+    }));
   }
 }
