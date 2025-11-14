@@ -257,4 +257,30 @@ export class SummarizationService {
       summary: analysis.summary
     };
   }
+
+  /**
+   * Bulk summarize multiple contacts
+   * Processes contacts sequentially to respect rate limits
+   */
+  async bulkSummarizeContacts(contactIds: number[]): Promise<{
+    totalProcessed: number;
+    successful: number;
+    failed: number;
+    results: SummarizationResult[];
+  }> {
+    const results: SummarizationResult[] = [];
+
+    // Process sequentially (one-by-one) to respect LLM rate limits
+    for (const contactId of contactIds) {
+      const result = await this.summarizeContact(contactId);
+      results.push(result);
+    }
+
+    return {
+      totalProcessed: contactIds.length,
+      successful: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
+      results,
+    };
+  }
 }
