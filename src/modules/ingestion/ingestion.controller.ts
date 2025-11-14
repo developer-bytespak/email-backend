@@ -15,6 +15,7 @@ import {
   Patch,
   BadRequestException,
   Res,
+  Delete,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { IngestionService } from './ingestion.service';
@@ -128,6 +129,31 @@ export class IngestionController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('contacts/invalid')
+  async getAllInvalidContacts(@Request() req) {
+    const clientId = req.user.id;
+    const contacts = await this.ingestionService.getAllInvalidContacts(clientId);
+
+    return {
+      message: 'All invalid contacts retrieved successfully',
+      count: contacts.length,
+      contacts,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('contacts/invalid/bulk')
+  async bulkDeleteInvalidContacts(@Request() req) {
+    const clientId = req.user.id;
+    const result = await this.ingestionService.bulkDeleteInvalidContacts(clientId);
+
+    return {
+      message: `Successfully deleted ${result.deletedCount} invalid contact(s)`,
+      deletedCount: result.deletedCount,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('contacts/:id')
   async getContact(
     @Request() req,
@@ -135,6 +161,21 @@ export class IngestionController {
   ) {
     const clientId = req.user.id;
     return this.ingestionService.getContactById(clientId, contactId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('contacts/:id')
+  async deleteContact(
+    @Request() req,
+    @Param('id', ParseIntPipe) contactId: number,
+  ) {
+    const clientId = req.user.id;
+    const result = await this.ingestionService.deleteContact(clientId, contactId);
+
+    return {
+      message: 'Contact deleted successfully',
+      deleted: result.deleted,
+    };
   }
 
   @UseGuards(JwtAuthGuard)
