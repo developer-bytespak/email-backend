@@ -128,4 +128,27 @@ export class EmailsController {
   ) {
     return this.emailsService.getEmailAnalytics(contactId, campaignId);
   }
+
+  /**
+   * Get email logs (history) for a specific clientEmailId
+   * GET /emails/logs/client-email/:clientEmailId
+   * Returns all emails sent from this email address
+   */
+  @Get('logs/client-email/:clientEmailId')
+  async getEmailLogs(@Param('clientEmailId', ParseIntPipe) clientEmailId: number) {
+    try {
+      const logs = await this.emailsService.getEmailLogsByClientEmailId(clientEmailId);
+      return {
+        message: 'Email logs retrieved successfully',
+        success: true,
+        count: logs.length,
+        data: logs,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve email logs',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

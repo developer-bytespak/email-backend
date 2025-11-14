@@ -148,46 +148,123 @@ export class SmsGenerationService {
 
   /**
    * Generate SMS content using Gemini AI with the provided prompt
+   * Uses research-driven, direct-response SMS copywriting approach
    */
   private async generateSmsContent(summary: any, contact: any): Promise<string> {
+    // Transform painPoints array into ranked structure for the prompt
+    const rankedPainPoints = (summary.painPoints || []).slice(0, 3).map((painPoint: string, index: number) => ({
+      rank: index + 1,
+      category: this.inferCategory(painPoint),
+      painPoint: painPoint,
+      evidence: this.extractEvidence(summary.summaryText, painPoint),
+    }));
+
+    // Transform keywords array into structured format
+    const keywords = {
+      industryTerms: summary.keywords || [],
+    };
+
     const smsPrompt = `
-You are an expert SMS copywriter who creates concise, high-converting business outreach texts that always sound fresh and human.
+You are a direct-response SMS copywriter. Write like a knowledgeable peer who researched their business—not a bot or salesperson.
 
-🎯 Task:
-Convert the provided business summary into a short, compelling SMS outreach message.
+Core Principle:
+Lead with research, not introduction. In 160-200 characters, prove you know their business before they ask who you are.
 
-💡 Requirements:
-- Strictly under 160 characters.
-- Professional yet conversational — sound like a real person, not an ad.
-- Include a clear, soft call-to-action (e.g., "Worth a quick look?", "Want details?", "Open to a chat?").
-- Highlight a specific value or pain point that would matter to the business.
-- Avoid generic phrases ("Let's connect", "Hope you're well") and spammy terms ("free", "discount", "limited").
-- Use natural phrasing, contractions, and variety in sentence rhythm.
-- Randomize tone slightly each time (rotate between Friendly, Confident, Curious, Value-Focused, or Direct).
-- Vary structure — do NOT always follow the same formula.
+Required Inputs:
+{
+  "companyName": "${contact.businessName}",
+  "rankedPainPoints": ${JSON.stringify(rankedPainPoints)},
+  "strengths": ${JSON.stringify(summary.strengths || [])},
+  "keywords": ${JSON.stringify(keywords)},
+  "website": "${contact.website || 'N/A'}",
+  "businessSummary": "${summary.summaryText}"
+}
 
-🧩 Structure Options (choose randomly each time):
-1. [Hook + Value + CTA]
-2. [Pain point + Solution + CTA]
-3. [Question + Benefit + CTA]
-4. [Observation + Insight + CTA]
-5. [Compliment + Offer + CTA]
+About Us (Reference Only): Bytes Platform - Software development partner for web/mobile apps, AI integrations, e-commerce, and UI/UX.
 
-📘 Input Data:
-- Company: ${contact.businessName}
-- Website: ${contact.website || 'N/A'}
-- Business Summary: ${summary.summaryText}
-- Pain Points: ${summary.painPoints.join(', ')}
-- Opportunities: ${summary.opportunities.join(', ')}
-- Keywords: ${summary.keywords.join(', ')}
+SMS Structure (160-200 characters):
+- Research Hook (60-100 chars): Specific observation about their site/business
+- Diagnostic Question (50-80 chars): Shows expertise, invites reply
+- Signature (20-40 chars): Role/credential, not company name
 
-🎁 Output:
-Only return the final SMS text (no labels, no explanations).
+Critical Rules:
 
-🧠 Example Outputs (should vary each time):
-"Valor helps homeowners avoid HVAC downtime with proactive installs. Seamless + fast. Worth chatting?"
-"Keeping HVAC jobs steady is tough—Valor's system automates it. Want a quick demo?"
-"Love Valor's focus on service-first installs. We've got a way to boost lead flow—curious?"
+Opening Strategy:
+RIGHT: "Noticed ${contact.businessName}'s checkout has 6 steps. Tested streamlined flow? -Alex, ecommerce dev"
+WRONG: "Hi, I'm Alex from Bytes. I noticed your site..."
+
+Must Include:
+- Company name + specific feature in first sentence
+- 1 industry term used naturally (from keywords.industryTerms)
+- Diagnostic question (not meeting request)
+- Signature with role only ("Alex, UX consultant" or "Alex, dev consultant")
+
+Never Include:
+- Personal name assumption ("Hi John")
+- Company introduction ("I'm from Bytes...")
+- Service pitch ("We specialize in...")
+- Links, emojis, excessive punctuation
+- Meeting requests ("Can we schedule...")
+
+Output Format:
+Generate 1 SMS variant (160-200 chars) that follows this structure:
+
+Variant Strategy (choose the best fit):
+1. Technical: Specific tech observation + question + signature
+2. Industry Pattern: Industry insight + company-specific question + signature
+3. Opportunity: Acknowledge strength + transition to gap + signature
+
+The SMS Must Include:
+- Character count (must be 160-200)
+- Company name reference
+- Observable evidence from their business
+- Question requiring <5 word answer
+- Signature showing relevance without company pitch
+
+Quality Checklist:
+- First 10 words prove research (preview text)
+- No "Hi [Name]" or personal assumptions
+- 160-200 characters (1 SMS unit)
+- Question is diagnostic, not sales-y
+- Signature shows relevance without company pitch
+- Industry term used naturally
+- Would pass "how did they know this?" test
+
+Examples:
+
+BAD:
+"Hi! I'm Alex from Bytes Platform. We build websites and apps. Would love to discuss helping your company. Free for a call?"
+[Template, no research, sales pitch]
+
+GOOD Examples:
+
+Example 1 (Technical):
+"Noticed ${contact.businessName}'s product pages load images sequentially on mobile. Tested lazy loading? Curious about bounce rate. -Alex, frontend dev"
+[Specific observation, technical term, diagnostic question]
+
+Example 2 (Pattern):
+"Most SaaS dashboards struggle with data viz at scale. Does ${contact.businessName}'s charting handle 10k+ data points smoothly? -Alex, worked on similar"
+[Industry knowledge, specific question, experience hint]
+
+Example 3 (Opportunity):
+"${contact.businessName}'s onboarding UX is clean. Checkout needs 6 steps though—tested streamlined flow? Worth discussing. -Alex, ecommerce consultant"
+[Strength + evidence + opportunity + credential]
+
+Signature Options:
+- For technical issues: "-Alex, frontend dev" | "-Alex, mobile specialist"
+- For UX/conversion: "-Alex, UX consultant" | "-Alex, ecommerce specialist"
+- For general: "-Alex, dev consultant" | "-Alex, build these"
+
+Keep it vague enough to create curiosity, specific enough to be credible.
+
+Industry-Specific Hooks:
+- E-commerce: "Noticed ${contact.businessName}'s cart abandonment modal fires after 5 seconds..."
+- SaaS: "${contact.businessName}'s dashboard makes 12 API calls on load..."
+- Service Business: "${contact.businessName}'s contact form has 8 required fields..."
+- Content/Media: "${contact.businessName}'s articles have 4.5 second load time on 4G..."
+
+OUTPUT:
+Return ONLY the SMS text (160-200 characters). No labels, no explanations, no JSON. Just the SMS message text.
 `;
 
     try {
@@ -197,10 +274,13 @@ Only return the final SMS text (no labels, no explanations).
       // Clean the response (remove any extra formatting)
       const smsMessage = response.trim().replace(/^["']|["']$/g, '');
 
-      // Validate character limit
-      if (smsMessage.length > 160) {
-        this.logger.warn(`SMS message exceeds 160 characters (${smsMessage.length}), truncating...`);
-        return smsMessage.substring(0, 157) + '...';
+      // Validate character limit (160-200 characters for research-driven SMS)
+      if (smsMessage.length < 160) {
+        this.logger.warn(`SMS message is too short (${smsMessage.length} chars). Expected 160-200 characters.`);
+      }
+      if (smsMessage.length > 200) {
+        this.logger.warn(`SMS message exceeds 200 characters (${smsMessage.length}), truncating...`);
+        return smsMessage.substring(0, 197) + '...';
       }
 
       return smsMessage;
@@ -208,8 +288,8 @@ Only return the final SMS text (no labels, no explanations).
     } catch (error) {
       this.logger.error('Failed to generate SMS content with Gemini:', error);
 
-      // Fallback SMS if Gemini fails
-      return `Hi ${contact.businessName}! We help businesses like yours grow. Interested in learning more? Reply YES.`;
+      // Fallback SMS if Gemini fails (still follows research-driven format)
+      return `Noticed ${contact.businessName}'s site. Quick question about your current setup? -Alex, dev consultant`;
     }
   }
 
@@ -219,6 +299,55 @@ Only return the final SMS text (no labels, no explanations).
   private async callGeminiForSms(prompt: string): Promise<string> {
     // Use the proper LlmClientService method for SMS generation
     return await this.llmClient.generateSmsContent(prompt);
+  }
+
+  /**
+   * Infer category from pain point text
+   */
+  private inferCategory(painPoint: string): string {
+    const lower = painPoint.toLowerCase();
+    if (lower.includes('ui') || lower.includes('ux') || lower.includes('design') || lower.includes('interface')) {
+      return 'UI/UX';
+    }
+    if (lower.includes('performance') || lower.includes('speed') || lower.includes('load') || lower.includes('slow')) {
+      return 'Performance';
+    }
+    if (lower.includes('mobile') || lower.includes('responsive') || lower.includes('device')) {
+      return 'Mobile';
+    }
+    if (lower.includes('checkout') || lower.includes('cart') || lower.includes('payment') || lower.includes('conversion')) {
+      return 'E-commerce';
+    }
+    if (lower.includes('seo') || lower.includes('search') || lower.includes('ranking')) {
+      return 'SEO';
+    }
+    if (lower.includes('security') || lower.includes('ssl') || lower.includes('https')) {
+      return 'Security';
+    }
+    return 'General';
+  }
+
+  /**
+   * Extract evidence from summary text related to pain point
+   */
+  private extractEvidence(summaryText: string, painPoint: string): string {
+    // Try to find a sentence in the summary that relates to the pain point
+    const sentences = summaryText.split(/[.!?]+/).filter(s => s.trim().length > 0);
+    const lowerPainPoint = painPoint.toLowerCase();
+    
+    for (const sentence of sentences) {
+      const lowerSentence = sentence.toLowerCase();
+      // Check if sentence contains keywords from pain point
+      const painPointWords = lowerPainPoint.split(/\s+/).filter(w => w.length > 3);
+      const matches = painPointWords.filter(word => lowerSentence.includes(word));
+      
+      if (matches.length > 0) {
+        return sentence.trim();
+      }
+    }
+    
+    // Fallback: return first sentence or a generic observation
+    return sentences[0]?.trim() || 'Observable from website analysis';
   }
 
   /**
@@ -289,9 +418,7 @@ Only return the final SMS text (no labels, no explanations).
       if (trimmed.length === 0) {
         throw new BadRequestException('messageText cannot be empty');
       }
-      if (trimmed.length > 160) {
-        throw new BadRequestException('messageText must be 160 characters or less');
-      }
+      // No character limit - user can set any length they want
       data.messageText = trimmed;
     }
 
