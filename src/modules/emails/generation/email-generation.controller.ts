@@ -42,6 +42,10 @@ export class UpdateEmailDraftDto {
 
   @IsOptional()
   productsRelevant?: string;
+
+  @IsOptional()
+  @IsNumber()
+  clientEmailId?: number;
 }
 
 @Controller('emails/generation')

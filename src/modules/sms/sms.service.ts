@@ -516,4 +516,129 @@ export class SmsService {
 
     return logs;
   }
+
+  /**
+   * Get all client SMS numbers for a specific client
+   */
+  async getClientSms(clientId: number): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const smsNumbers = await scrapingClient.clientSms.findMany({
+      where: { clientId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        phoneNumber: true,
+        status: true,
+        currentCounter: true,
+        totalCounter: true,
+        limit: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return smsNumbers;
+  }
+
+  /**
+   * Create a new client SMS number
+   */
+  async createClientSms(clientId: number, createDto: { phoneNumber: string; providerSettings?: string }): Promise<any> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    try {
+      // Check if phone number already exists for this client
+      const existing = await scrapingClient.clientSms.findFirst({
+        where: {
+          clientId,
+          phoneNumber: createDto.phoneNumber,
+        },
+      });
+
+      if (existing) {
+        throw new BadRequestException('Phone number already exists for this client');
+      }
+
+      const clientSms = await scrapingClient.clientSms.create({
+        data: {
+          clientId,
+          phoneNumber: createDto.phoneNumber,
+          providerSettings: createDto.providerSettings,
+          status: 'active',
+          limit: null, // No limit by default
+          currentCounter: 0,
+          totalCounter: 0,
+        },
+        select: {
+          id: true,
+          phoneNumber: true,
+          status: true,
+          currentCounter: true,
+          totalCounter: true,
+          limit: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      this.logger.log(`✅ Created client SMS ${clientSms.id} for client ${clientId}`);
+
+      return clientSms;
+    } catch (error) {
+      // Handle Prisma unique constraint errors
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      
+      // Check if it's a Prisma unique constraint error
+      if (error && typeof error === 'object' && 'code' in error) {
+        if (error.code === 'P2002') {
+          // Unique constraint violation
+          const meta = (error as any).meta;
+          if (meta?.target?.includes('phoneNumber')) {
+            throw new BadRequestException('Phone number already exists for this client');
+          }
+        }
+      }
+      
+      this.logger.error(`Failed to create client SMS: ${error}`);
+      throw new BadRequestException('Failed to create phone number. Please try again.');
+    }
+  }
+
+  /**
+   * Delete a client SMS number
+   */
+  async deleteClientSms(clientId: number, id: number): Promise<void> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Verify the SMS number belongs to the client
+    const clientSms = await scrapingClient.clientSms.findUnique({
+      where: { id },
+    });
+
+    if (!clientSms) {
+      throw new NotFoundException(`Client SMS with ID ${id} not found`);
+    }
+
+    if (clientSms.clientId !== clientId) {
+      throw new BadRequestException('You do not have permission to delete this SMS number');
+    }
+
+    // Check if there are any drafts using this SMS number
+    const draftCount = await scrapingClient.smsDraft.count({
+      where: { clientSmsId: id },
+    });
+
+    if (draftCount > 0) {
+      throw new BadRequestException(`Cannot delete SMS number: ${draftCount} draft(s) are using this phone number`);
+    }
+
+    await scrapingClient.clientSms.delete({
+      where: { id },
+    });
+
+    this.logger.log(`✅ Deleted client SMS ${id} for client ${clientId}`);
+  }
 }

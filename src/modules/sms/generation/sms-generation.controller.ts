@@ -28,6 +28,10 @@ export class UpdateSmsDraftDto {
   @IsOptional()
   @IsString()
   messageText?: string;
+
+  @IsOptional()
+  @IsNumber()
+  clientSmsId?: number;
 }
 
 @Controller('sms/generation')

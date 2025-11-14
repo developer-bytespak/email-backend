@@ -10,6 +10,7 @@ import { SummarizationModule } from './modules/summarization/summarization.modul
 import { SmsModule } from './modules/sms/sms.module';
 import { EmailsModule } from './modules/emails/emails.module';
 import { SmsTwilioModule } from './modules/sms/twilio/sms.twilio.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { SmsTwilioModule } from './modules/sms/twilio/sms.twilio.module';
     SmsModule,
     EmailsModule,
     SmsTwilioModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

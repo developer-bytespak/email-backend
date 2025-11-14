@@ -400,16 +400,66 @@ Return ONLY the SMS text (160-200 characters). No labels, no explanations, no JS
   /**
    * Update SMS draft
    */
-  async updateSmsDraft(draftId: number, updates: { messageText?: string }): Promise<any> {
+  async updateSmsDraft(draftId: number, updates: { messageText?: string; clientSmsId?: number }): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
-    const draft = await scrapingClient.smsDraft.findUnique({ where: { id: draftId } });
-    if (!draft) {
-      throw new NotFoundException(`SMS draft with ID ${draftId} not found`);
-    }
+    // If clientSmsId is being updated, verify it exists and belongs to the same client
+    if (updates.clientSmsId !== undefined) {
+      const draft = await scrapingClient.smsDraft.findUnique({
+        where: { id: draftId },
+        include: { 
+          clientSms: true,
+          contact: {
+            include: {
+              csvUpload: {
+                select: {
+                  clientId: true,
+                },
+              },
+            },
+          },
+        },
+      });
 
-    if (draft.status !== 'draft') {
-      throw new BadRequestException('Only drafts with status "draft" can be edited');
+      if (!draft) {
+        throw new NotFoundException(`SMS draft with ID ${draftId} not found`);
+      }
+
+      const newClientSms = await scrapingClient.clientSms.findUnique({
+        where: { id: updates.clientSmsId },
+      });
+
+      if (!newClientSms) {
+        throw new NotFoundException(`Client SMS with ID ${updates.clientSmsId} not found`);
+      }
+
+      // Get the client ID from the draft's contact (via csvUpload) or from existing clientSms
+      let draftClientId: number | null = null;
+      if (draft.contact?.csvUpload?.clientId) {
+        draftClientId = draft.contact.csvUpload.clientId;
+      } else if (draft.clientSms?.clientId) {
+        draftClientId = draft.clientSms.clientId;
+      }
+
+      // If we can't determine the client ID, we need to reject
+      if (!draftClientId) {
+        throw new BadRequestException('Cannot determine client for this draft');
+      }
+
+      // Verify the new client SMS belongs to the same client
+      if (newClientSms.clientId !== draftClientId) {
+        throw new BadRequestException('Cannot change phone number to one from a different client');
+      }
+    } else {
+      // Only check draft status if not updating clientSmsId (to allow updating clientSmsId for sent drafts in some cases)
+      const draft = await scrapingClient.smsDraft.findUnique({ where: { id: draftId } });
+      if (!draft) {
+        throw new NotFoundException(`SMS draft with ID ${draftId} not found`);
+      }
+
+      if (draft.status !== 'draft' && updates.messageText !== undefined) {
+        throw new BadRequestException('Only drafts with status "draft" can be edited');
+      }
     }
 
     const data: any = {};
@@ -422,7 +472,15 @@ Return ONLY the SMS text (160-200 characters). No labels, no explanations, no JS
       data.messageText = trimmed;
     }
 
+    if (updates.clientSmsId !== undefined) {
+      data.clientSmsId = updates.clientSmsId;
+    }
+
     if (Object.keys(data).length === 0) {
+      const draft = await scrapingClient.smsDraft.findUnique({ where: { id: draftId } });
+      if (!draft) {
+        throw new NotFoundException(`SMS draft with ID ${draftId} not found`);
+      }
       return draft; // nothing to update
     }
 
