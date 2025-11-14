@@ -462,6 +462,49 @@ export class IngestionService {
     return contacts as ContactWithUpload[];
   }
 
+  /**
+   * Get all invalid contacts for a client (no pagination)
+   * Invalid = no email AND no phone
+   */
+  async getAllInvalidContacts(clientId: number): Promise<ContactWithUpload[]> {
+    const where: Prisma.ContactWhereInput = {
+      csvUpload: {
+        clientId,
+      },
+      // Invalid contacts: no email AND no phone
+      AND: [
+        {
+          OR: [
+            { email: null },
+            { email: { equals: '' } },
+          ],
+        },
+        {
+          OR: [
+            { phone: null },
+            { phone: { equals: '' } },
+          ],
+        },
+      ],
+    };
+
+    const contacts = await this.prisma.contact.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    return contacts.map((contact) => this.mapContact(contact)) as ContactWithUpload[];
+  }
+
   async listContacts(clientId: number, query: GetContactsQueryDto) {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit = query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 25;
@@ -687,5 +730,73 @@ export class IngestionService {
       updated,
       failed,
     };
+  }
+
+  /**
+   * Bulk delete all invalid contacts for a client
+   * Invalid = no email AND no phone
+   * Uses raw SQL for performance (single DELETE with JOIN)
+   * Returns the count of deleted records
+   */
+  async bulkDeleteInvalidContacts(clientId: number): Promise<{ deletedCount: number }> {
+    // First, count how many will be deleted
+    const countResult = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*) as count
+      FROM "Contact" c
+      INNER JOIN "CsvUpload" cu ON c."csvUploadId" = cu.id
+      WHERE cu."clientId" = ${clientId}
+        AND (
+          (c.email IS NULL OR c.email = '')
+          AND (c.phone IS NULL OR c.phone = '')
+        )
+    `;
+
+    const count = Number(countResult[0]?.count || 0);
+
+    if (count === 0) {
+      return { deletedCount: 0 };
+    }
+
+    // Single DELETE query with JOIN - database-optimized
+    // Note: Prisma doesn't support DELETE with JOIN directly, so we use raw SQL
+    await this.prisma.$executeRaw`
+      DELETE FROM "Contact" c
+      USING "CsvUpload" cu
+      WHERE c."csvUploadId" = cu.id
+        AND cu."clientId" = ${clientId}
+        AND (
+          (c.email IS NULL OR c.email = '')
+          AND (c.phone IS NULL OR c.phone = '')
+        )
+    `;
+
+    return { deletedCount: count };
+  }
+
+  /**
+   * Delete a single contact by ID
+   * Verifies the contact belongs to the client before deleting
+   */
+  async deleteContact(clientId: number, contactId: number): Promise<{ deleted: boolean }> {
+    // First verify the contact belongs to the client
+    const contact = await this.prisma.contact.findFirst({
+      where: {
+        id: contactId,
+        csvUpload: {
+          clientId,
+        },
+      },
+    });
+
+    if (!contact) {
+      throw new NotFoundException(`Contact with ID ${contactId} not found or access denied`);
+    }
+
+    // Delete the contact
+    await this.prisma.contact.delete({
+      where: { id: contactId },
+    });
+
+    return { deleted: true };
   }
 }
