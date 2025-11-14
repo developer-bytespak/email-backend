@@ -1,5 +1,12 @@
-import { Controller, Post, Get, Param, Query, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, HttpException, HttpStatus, HttpCode, ValidationPipe } from '@nestjs/common';
+import { IsArray, IsNumber } from 'class-validator';
 import { SummarizationService } from './summarization.service';
+
+export class BulkSummarizeDto {
+  @IsArray()
+  @IsNumber({}, { each: true })
+  contactIds: number[];
+}
 
 @Controller('summarization')
 export class SummarizationController {
@@ -98,6 +105,33 @@ export class SummarizationController {
     } catch (error) {
       throw new HttpException(
         error.message || 'Test summarization failed',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  /**
+   * Bulk generate summaries for multiple contacts
+   * POST /summarization/bulk-generate
+   * Body: { contactIds: number[] }
+   */
+  @Post('bulk-generate')
+  @HttpCode(HttpStatus.CREATED)
+  async bulkSummarizeContacts(@Body(ValidationPipe) bulkDto: BulkSummarizeDto) {
+    try {
+      const result = await this.summarizationService.bulkSummarizeContacts(bulkDto.contactIds);
+      
+      return {
+        message: 'Bulk summarization completed',
+        success: true,
+        totalProcessed: result.totalProcessed,
+        successful: result.successful,
+        failed: result.failed,
+        results: result.results,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Bulk summarization failed',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
