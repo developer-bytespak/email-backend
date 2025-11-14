@@ -402,4 +402,74 @@ export class EmailsService {
       clickedEmails: 0,
     };
   }
+
+  /**
+   * Get email logs (history) for a specific clientEmailId
+   * Returns all emails sent from this email address with full details
+   */
+  async getEmailLogsByClientEmailId(clientEmailId: number): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Verify clientEmail exists
+    const clientEmail = await scrapingClient.clientEmail.findUnique({
+      where: { id: clientEmailId },
+      select: { id: true, emailAddress: true, status: true },
+    });
+
+    if (!clientEmail) {
+      throw new NotFoundException(`ClientEmail with ID ${clientEmailId} not found`);
+    }
+
+    // Get all email logs for this clientEmailId (via emailDraft relation)
+    const logs = await scrapingClient.emailLog.findMany({
+      where: {
+        emailDraft: {
+          clientEmailId: clientEmailId,
+        },
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            phone: true,
+          },
+        },
+        emailDraft: {
+          select: {
+            id: true,
+            subjectLine: true,
+            bodyText: true,
+            status: true,
+            createdAt: true,
+            clientEmail: {
+              select: {
+                id: true,
+                emailAddress: true,
+                status: true,
+                currentCounter: true,
+                totalCounter: true,
+                limit: true,
+              },
+            },
+          },
+        },
+        emailEngagements: {
+          select: {
+            id: true,
+            engagementType: true,
+            engagedAt: true,
+            url: true,
+          },
+          orderBy: { engagedAt: 'desc' },
+        },
+      },
+      orderBy: { sentAt: 'desc' }, // Newest first
+    });
+
+    this.logger.log(`✅ Retrieved ${logs.length} email logs for ClientEmail ${clientEmailId}`);
+
+    return logs;
+  }
 }

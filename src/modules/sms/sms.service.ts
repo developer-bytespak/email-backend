@@ -460,4 +460,60 @@ export class SmsService {
       throw error;
     }
   }
+
+  /**
+   * Get SMS logs (history) for a specific clientSmsId
+   * Returns all SMS sent from this SMS number with full details
+   */
+  async getSmsLogsByClientSmsId(clientSmsId: number): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Verify clientSms exists
+    const clientSms = await scrapingClient.clientSms.findUnique({
+      where: { id: clientSmsId },
+      select: { id: true, phoneNumber: true, status: true },
+    });
+
+    if (!clientSms) {
+      throw new NotFoundException(`ClientSms with ID ${clientSmsId} not found`);
+    }
+
+    // Get all SMS logs for this clientSmsId
+    const logs = await scrapingClient.smsLog.findMany({
+      where: { clientSmsId },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            businessName: true,
+            phone: true,
+            email: true,
+          },
+        },
+        smsDraft: {
+          select: {
+            id: true,
+            messageText: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        clientSms: {
+          select: {
+            id: true,
+            phoneNumber: true,
+            status: true,
+            currentCounter: true,
+            totalCounter: true,
+            limit: true,
+          },
+        },
+      },
+      orderBy: { sentAt: 'desc' }, // Newest first
+    });
+
+    this.logger.log(`✅ Retrieved ${logs.length} SMS logs for ClientSms ${clientSmsId}`);
+
+    return logs;
+  }
 }
