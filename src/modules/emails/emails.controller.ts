@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Query,
+  Delete,
   ParseIntPipe,
   HttpException,
   HttpStatus,
@@ -13,7 +14,7 @@ import {
   UnauthorizedException,
   Request,
 } from '@nestjs/common';
-import { IsNumber, IsOptional, IsString, IsArray, IsIn } from 'class-validator';
+import { IsNumber, IsOptional, IsString, IsArray, IsIn, IsEmail } from 'class-validator';
 import { EmailsService } from './emails.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -40,6 +41,15 @@ export class CreateCampaignDto {
   @IsOptional()
   @IsIn(['friendly', 'professional', 'pro_friendly'])
   tone?: 'friendly' | 'professional' | 'pro_friendly';
+}
+
+export class CreateClientEmailDto {
+  @IsEmail()
+  emailAddress: string;
+
+  @IsOptional()
+  @IsString()
+  providerSettings?: string;
 }
 
 @Controller('emails')
@@ -147,6 +157,87 @@ export class EmailsController {
     } catch (error) {
       throw new HttpException(
         error.message || 'Failed to retrieve email logs',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Get all client emails for authenticated user
+   * GET /emails/client-emails
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('client-emails')
+  async getClientEmails(@Request() req) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      const emails = await this.emailsService.getClientEmails(clientId);
+      return {
+        message: 'Client emails retrieved successfully',
+        success: true,
+        count: emails.length,
+        data: emails,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve client emails',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Create a new client email
+   * POST /emails/client-emails
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('client-emails')
+  async createClientEmail(@Request() req, @Body() createDto: CreateClientEmailDto) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      const clientEmail = await this.emailsService.createClientEmail(clientId, createDto);
+      return {
+        message: 'Client email created successfully',
+        success: true,
+        data: clientEmail,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to create client email',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Delete a client email
+   * DELETE /emails/client-emails/:id
+   */
+  @UseGuards(JwtAuthGuard)
+  @Delete('client-emails/:id')
+  async deleteClientEmail(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      await this.emailsService.deleteClientEmail(clientId, id);
+      return {
+        message: 'Client email deleted successfully',
+        success: true,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to delete client email',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

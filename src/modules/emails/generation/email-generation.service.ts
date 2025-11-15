@@ -480,8 +480,55 @@ Best regards,
     bodyText?: string;
     icebreaker?: string;
     productsRelevant?: string;
+    clientEmailId?: number;
   }): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
+
+    // If clientEmailId is being updated, verify it exists and belongs to the same client
+    if (updates.clientEmailId !== undefined) {
+      const draft = await scrapingClient.emailDraft.findUnique({
+        where: { id: draftId },
+        include: { 
+          clientEmail: true, // clientEmailId is required, so this should always exist
+        },
+      });
+
+      if (!draft) {
+        throw new NotFoundException(`Email draft with ID ${draftId} not found`);
+      }
+
+      if (!draft.clientEmail) {
+        throw new BadRequestException('Email draft is missing client email relation. This should not happen.');
+      }
+
+      const newClientEmail = await scrapingClient.clientEmail.findUnique({
+        where: { id: updates.clientEmailId },
+      });
+
+      if (!newClientEmail) {
+        throw new NotFoundException(`Client email with ID ${updates.clientEmailId} not found`);
+      }
+
+      // Verify the new client email belongs to the same client as the existing one
+      const currentClientId = draft.clientEmail.clientId;
+      const newClientId = newClientEmail.clientId;
+      
+      if (newClientId !== currentClientId) {
+        this.logger.warn(
+          `Client ID mismatch: Draft ${draftId} has clientEmail ${draft.clientEmail.id} (clientId: ${currentClientId}), ` +
+          `but trying to change to clientEmail ${updates.clientEmailId} (clientId: ${newClientId})`
+        );
+        throw new BadRequestException(
+          `Cannot change email to one from a different client. Current email belongs to client ${currentClientId}, ` +
+          `new email belongs to client ${newClientId}`
+        );
+      }
+      
+      this.logger.log(
+        `Updating draft ${draftId} from clientEmail ${draft.clientEmail.id} (${draft.clientEmail.emailAddress}) ` +
+        `to clientEmail ${updates.clientEmailId} (${newClientEmail.emailAddress}) - both belong to client ${currentClientId}`
+      );
+    }
 
     const updatedDraft = await scrapingClient.emailDraft.update({
       where: { id: draftId },

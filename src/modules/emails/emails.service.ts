@@ -472,4 +472,129 @@ export class EmailsService {
 
     return logs;
   }
+
+  /**
+   * Get all client emails for a specific client
+   */
+  async getClientEmails(clientId: number): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const emails = await scrapingClient.clientEmail.findMany({
+      where: { clientId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        emailAddress: true,
+        status: true,
+        currentCounter: true,
+        totalCounter: true,
+        limit: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return emails;
+  }
+
+  /**
+   * Create a new client email
+   */
+  async createClientEmail(clientId: number, createDto: { emailAddress: string; providerSettings?: string }): Promise<any> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    try {
+      // Check if email already exists for this client
+      const existing = await scrapingClient.clientEmail.findFirst({
+        where: {
+          clientId,
+          emailAddress: createDto.emailAddress,
+        },
+      });
+
+      if (existing) {
+        throw new BadRequestException('Email address already exists for this client');
+      }
+
+      const clientEmail = await scrapingClient.clientEmail.create({
+        data: {
+          clientId,
+          emailAddress: createDto.emailAddress,
+          providerSettings: createDto.providerSettings,
+          status: 'active',
+          limit: 500,
+          currentCounter: 0,
+          totalCounter: 0,
+        },
+        select: {
+          id: true,
+          emailAddress: true,
+          status: true,
+          currentCounter: true,
+          totalCounter: true,
+          limit: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      this.logger.log(`✅ Created client email ${clientEmail.id} for client ${clientId}`);
+
+      return clientEmail;
+    } catch (error) {
+      // Handle Prisma unique constraint errors
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      
+      // Check if it's a Prisma unique constraint error
+      if (error && typeof error === 'object' && 'code' in error) {
+        if (error.code === 'P2002') {
+          // Unique constraint violation
+          const meta = (error as any).meta;
+          if (meta?.target?.includes('emailAddress')) {
+            throw new BadRequestException('Email address already exists for this client');
+          }
+        }
+      }
+      
+      this.logger.error(`Failed to create client email: ${error}`);
+      throw new BadRequestException('Failed to create email address. Please try again.');
+    }
+  }
+
+  /**
+   * Delete a client email
+   */
+  async deleteClientEmail(clientId: number, id: number): Promise<void> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Verify the email belongs to the client
+    const clientEmail = await scrapingClient.clientEmail.findUnique({
+      where: { id },
+    });
+
+    if (!clientEmail) {
+      throw new NotFoundException(`Client email with ID ${id} not found`);
+    }
+
+    if (clientEmail.clientId !== clientId) {
+      throw new BadRequestException('You do not have permission to delete this email');
+    }
+
+    // Check if there are any drafts using this email
+    const draftCount = await scrapingClient.emailDraft.count({
+      where: { clientEmailId: id },
+    });
+
+    if (draftCount > 0) {
+      throw new BadRequestException(`Cannot delete email: ${draftCount} draft(s) are using this email address`);
+    }
+
+    await scrapingClient.clientEmail.delete({
+      where: { id },
+    });
+
+    this.logger.log(`✅ Deleted client email ${id} for client ${clientId}`);
+  }
 }
