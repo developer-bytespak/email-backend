@@ -72,7 +72,7 @@ export class EmailsService {
         try {
           const optimized = await this.optimizationService.optimizeContent(
             draft.bodyText,
-            draft.subjectLine
+            draft.subjectLines?.[0] || ''
           );
           
           if (optimized.optimizedContent) {
@@ -151,7 +151,7 @@ export class EmailsService {
       const sendResult = await this.sendGridService.sendEmail(
         contact.email || '',
         clientEmail.emailAddress,
-        draft.subjectLine,
+        draft.subjectLines?.[0] || '',
         processedBody,
         {
           unsubscribeToken,
@@ -439,7 +439,7 @@ export class EmailsService {
         emailDraft: {
           select: {
             id: true,
-            subjectLine: true,
+            subjectLines: true,
             bodyText: true,
             status: true,
             createdAt: true,

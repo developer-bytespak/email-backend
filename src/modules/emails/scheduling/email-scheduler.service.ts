@@ -204,7 +204,7 @@ export class EmailSchedulerService implements OnModuleInit {
       const sendResult = await this.sendGridService.sendEmail(
         contact.email || '',
         clientEmail.emailAddress,
-        draft.subjectLine,
+        draft.subjectLines?.[0] || '',
         processedBody,
         {
           unsubscribeToken,

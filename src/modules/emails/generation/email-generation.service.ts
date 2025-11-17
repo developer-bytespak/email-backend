@@ -128,7 +128,7 @@ export class EmailGenerationService {
           clientEmailId: request.clientEmailId,
           contactId: request.contactId,
           summaryId: request.summaryId,
-          subjectLine: emailContent.subjectLines[0], // Use first subject line as primary
+          subjectLines: emailContent.subjectLines, // Save all subject lines
           bodyText: emailContent.emailBody,
           icebreaker: emailContent.icebreaker,
           productsRelevant: emailContent.rationale,
@@ -476,7 +476,7 @@ Best regards,
    * Update email draft
    */
   async updateEmailDraft(draftId: number, updates: {
-    subjectLine?: string;
+    subjectLines?: string[];
     bodyText?: string;
     icebreaker?: string;
     productsRelevant?: string;

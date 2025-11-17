@@ -32,7 +32,7 @@ export class GenerateEmailDto {
 
 export class UpdateEmailDraftDto {
   @IsOptional()
-  subjectLine?: string;
+  subjectLines?: string[];
 
   @IsOptional()
   bodyText?: string;

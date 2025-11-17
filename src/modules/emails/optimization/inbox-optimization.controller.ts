@@ -56,7 +56,7 @@ export class InboxOptimizationController {
       const draft = await scrapingClient.emailDraft.findUnique({
         where: { id: checkDto.draftId },
         select: {
-          subjectLine: true,
+          subjectLines: true,
           bodyText: true,
           icebreaker: true,
           productsRelevant: true,
@@ -69,7 +69,7 @@ export class InboxOptimizationController {
 
       // Combine all email content for spam check
       content = draft.bodyText;
-      subjectLine = draft.subjectLine;
+      subjectLine = draft.subjectLines?.[0];
       
       // Include icebreaker and productsRelevant if they exist
       if (draft.icebreaker) {
@@ -112,7 +112,7 @@ export class InboxOptimizationController {
       const draft = await scrapingClient.emailDraft.findUnique({
         where: { id: optimizeDto.draftId },
         select: {
-          subjectLine: true,
+          subjectLines: true,
           bodyText: true,
           icebreaker: true,
           productsRelevant: true,
@@ -125,7 +125,7 @@ export class InboxOptimizationController {
 
       // Combine all email content for optimization
       content = draft.bodyText;
-      subjectLine = draft.subjectLine;
+      subjectLine = draft.subjectLines?.[0];
       
       // Include icebreaker and productsRelevant if they exist
       if (draft.icebreaker) {
