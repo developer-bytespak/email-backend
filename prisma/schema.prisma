@@ -135,7 +135,7 @@ model EmailDraft {
   clientEmailId    Int
   contactId        Int
   summaryId        Int
-  subjectLine      String
+  subjectLines     String[]
   bodyText         String
   icebreaker       String?
   productsRelevant String?

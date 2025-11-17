@@ -375,7 +375,7 @@ export class EmailAnalyticsService {
           },
           emailDraft: {
             select: {
-              subjectLine: true,
+              subjectLines: true,
             },
           },
         },
@@ -407,7 +407,7 @@ export class EmailAnalyticsService {
               },
               emailDraft: {
                 select: {
-                  subjectLine: true,
+                  subjectLines: true,
                 },
               },
             },
@@ -438,7 +438,7 @@ export class EmailAnalyticsService {
               status: true,
               emailDraft: {
                 select: {
-                  subjectLine: true,
+                  subjectLines: true,
                 },
               },
             },
@@ -452,7 +452,7 @@ export class EmailAnalyticsService {
     for (const log of emailLogs) {
       const contactName = log.contact?.businessName ?? null;
       const email = log.contact?.email ?? null;
-      const subject = log.emailDraft?.subjectLine ?? null;
+      const subject = log.emailDraft?.subjectLines?.[0] ?? null;
 
       if (log.processedAt && this.isWithinRange(log.processedAt, from, to)) {
         events.push({
@@ -513,7 +513,7 @@ export class EmailAnalyticsService {
         occurredAt: engagement.engagedAt.toISOString(),
         email: engagement.emailLog.contact?.email ?? null,
         contactName: engagement.emailLog.contact?.businessName ?? null,
-        subject: engagement.emailLog.emailDraft?.subjectLine ?? null,
+        subject: engagement.emailLog.emailDraft?.subjectLines?.[0] ?? null,
         status: engagement.emailLog.status,
         url: engagement.engagementType === EngagementType.click ? engagement.url ?? null : null,
       });
@@ -526,7 +526,7 @@ export class EmailAnalyticsService {
         occurredAt: unsubscribe.unsubscribedAt.toISOString(),
         email: unsubscribe.contact?.email ?? null,
         contactName: unsubscribe.contact?.businessName ?? null,
-        subject: unsubscribe.emailLog?.emailDraft?.subjectLine ?? null,
+        subject: unsubscribe.emailLog?.emailDraft?.subjectLines?.[0] ?? null,
         status: unsubscribe.emailLog?.status ?? null,
       });
     }
