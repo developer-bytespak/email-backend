@@ -15,6 +15,8 @@ export interface EmailAnalyticsOverview {
     opened: number;
     clicked: number;
     bounced: number;
+    hardBounces: number;
+    softBounces: number;
     spamReports: number;
     unsubscribes: number;
   };
@@ -23,6 +25,8 @@ export interface EmailAnalyticsOverview {
     openRate: number;
     clickRate: number;
     bounceRate: number;
+    hardBounceRate: number;
+    softBounceRate: number;
     spamReportRate: number;
   };
 }
@@ -69,7 +73,6 @@ export class EmailAnalyticsService {
     const [
       totalRequests,
       deliveredCount,
-      bouncedCount,
       spamReportCount,
       unsubscribesCount,
       processedCount,
@@ -78,6 +81,7 @@ export class EmailAnalyticsService {
       blockedCount,
       openCount,
       clickCount,
+      bouncedLogs,
     ] = await Promise.all([
       this.prisma.emailLog.count({
         where: {
@@ -98,17 +102,6 @@ export class EmailAnalyticsService {
           },
           status: 'delivered',
           deliveredAt: { gte: from, lte: to },
-        },
-      }),
-      this.prisma.emailLog.count({
-        where: {
-          emailDraft: {
-            clientEmail: {
-              clientId,
-            },
-          },
-          status: 'bounced',
-          sentAt: { gte: from, lte: to },
         },
       }),
       this.prisma.emailLog.count({
@@ -200,7 +193,38 @@ export class EmailAnalyticsService {
           },
         },
       }),
+      // Get bounced emails with providerResponse for hard/soft classification
+      this.prisma.emailLog.findMany({
+        where: {
+          emailDraft: {
+            clientEmail: {
+              clientId,
+            },
+          },
+          status: 'bounced',
+          sentAt: { gte: from, lte: to },
+        },
+        select: {
+          providerResponse: true,
+        },
+      }),
     ]);
+
+    // Count hard vs soft bounces from providerResponse
+    let hardBounceCount = 0;
+    let softBounceCount = 0;
+    const actualBouncedCount = bouncedLogs.length;
+    
+    bouncedLogs.forEach(log => {
+      if (log.providerResponse) {
+        const bounceData = (log.providerResponse as any)?.bounce;
+        if (bounceData?.type === 'hard') {
+          hardBounceCount++;
+        } else if (bounceData?.type === 'soft') {
+          softBounceCount++;
+        }
+      }
+    });
 
     const effectiveDeliveries = deliveredCount || processedCount;
     const totals = {
@@ -208,7 +232,9 @@ export class EmailAnalyticsService {
       delivered: deliveredCount,
       opened: openCount,
       clicked: clickCount,
-      bounced: bouncedCount,
+      bounced: actualBouncedCount,
+      hardBounces: hardBounceCount,
+      softBounces: softBounceCount,
       spamReports: spamReportCount,
       unsubscribes: unsubscribesCount,
     };
@@ -217,7 +243,9 @@ export class EmailAnalyticsService {
       deliveryRate: totalRequests ? (effectiveDeliveries / totalRequests) * 100 : 0,
       openRate: effectiveDeliveries ? (openCount / effectiveDeliveries) * 100 : 0,
       clickRate: effectiveDeliveries ? (clickCount / effectiveDeliveries) * 100 : 0,
-      bounceRate: totalRequests ? (bouncedCount / totalRequests) * 100 : 0,
+      bounceRate: totalRequests ? (actualBouncedCount / totalRequests) * 100 : 0,
+      hardBounceRate: totalRequests ? (hardBounceCount / totalRequests) * 100 : 0,
+      softBounceRate: totalRequests ? (softBounceCount / totalRequests) * 100 : 0,
       spamReportRate: totalRequests ? (spamReportCount / totalRequests) * 100 : 0,
     };
 
