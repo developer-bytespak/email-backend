@@ -82,11 +82,14 @@ export class EmailSchedulerService implements OnModuleInit {
 
   /**
    * Calculate priority based on scheduled time (FIFO)
+   * Uses relative seconds from base date to fit in INT4 (max ~68 years from base)
    */
   private calculatePriority(scheduledAt: Date): number {
     // Lower number = higher priority
-    // Use timestamp as priority for FIFO ordering
-    return scheduledAt.getTime();
+    // Use relative priority: seconds since base date (fits in INT4)
+    const baseDate = new Date('2020-01-01T00:00:00Z');
+    const secondsSinceBase = Math.floor((scheduledAt.getTime() - baseDate.getTime()) / 1000);
+    return secondsSinceBase; // This will fit in INT4 (max value: 2,147,483,647 seconds ≈ 68 years)
   }
 
   /**
@@ -345,6 +348,46 @@ export class EmailSchedulerService implements OnModuleInit {
       failed,
       nextProcessing,
     };
+  }
+
+  /**
+   * Get all queued emails with details
+   */
+  async getAllQueuedEmails(status?: 'pending' | 'sent' | 'failed'): Promise<any[]> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    const where: any = {};
+    if (status) {
+      where.status = status;
+    }
+    
+    return await scrapingClient.emailQueue.findMany({
+      where,
+      include: {
+        emailDraft: {
+          include: {
+            contact: {
+              select: {
+                id: true,
+                businessName: true,
+                email: true,
+              },
+            },
+            clientEmail: {
+              select: {
+                id: true,
+                emailAddress: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { priority: 'asc' },
+        { scheduledAt: 'asc' },
+        { createdAt: 'asc' },
+      ],
+    });
   }
 
   /**
