@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Delete, Param, ParseIntPipe } from '@nestjs/common';
+import { Controller, Post, Body, Get, Delete, Param, ParseIntPipe, Query } from '@nestjs/common';
 import { IsNumber, IsDateString } from 'class-validator';
 import { EmailSchedulerService } from './email-scheduler.service';
 
@@ -32,7 +32,7 @@ export class EmailSchedulerController {
 
   /**
    * Get queue status
-   * GET /emails/queue/status
+   * GET /emails/schedule/queue/status
    */
   @Get('queue/status')
   async getQueueStatus() {
@@ -46,7 +46,28 @@ export class EmailSchedulerController {
   }
 
   /**
-   * Remove from queue
+   * Get all queued emails
+   * GET /emails/schedule/queue
+   * Optional query param: ?status=pending|sent|failed
+   */
+  @Get('queue')
+  async getAllQueuedEmails(@Query('status') status?: string) {
+    const validStatus = status && ['pending', 'sent', 'failed'].includes(status) 
+      ? status as 'pending' | 'sent' | 'failed' 
+      : undefined;
+    
+    const queuedEmails = await this.schedulerService.getAllQueuedEmails(validStatus);
+    
+    return {
+      success: true,
+      message: 'Queued emails retrieved successfully',
+      count: queuedEmails.length,
+      data: queuedEmails,
+    };
+  }
+
+  /**
+   * Remove from queue (dequeue)
    * DELETE /emails/schedule/queue/:draftId
    */
   @Delete('queue/:draftId')
