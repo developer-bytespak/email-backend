@@ -37,21 +37,94 @@ export class BounceManagementService {
   async processWebhookEvent(event: SendGridWebhookEvent): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
-    // Find EmailLog by messageId
-    if (!event.sg_message_id) {
-      this.logger.warn('Webhook event missing sg_message_id:', event);
-      return;
+    // Log webhook event details for debugging
+    this.logger.debug(
+      `📥 Webhook event received: ${event.event}, ` +
+      `sg_message_id: ${event.sg_message_id}, ` +
+      `custom_args: ${JSON.stringify(event.custom_args)}`
+    );
+    
+    let emailLog: any = null;
+
+    // Strategy 1 (Primary): Match by emailLogId from custom_args
+    // Most reliable: Direct database primary key lookup
+    if (event.custom_args?.emailLogId) {
+      const emailLogId = parseInt(event.custom_args.emailLogId, 10);
+      if (!isNaN(emailLogId)) {
+        emailLog = await scrapingClient.emailLog.findUnique({
+          where: { id: emailLogId },
+          include: { contact: true },
+        });
+        
+        if (emailLog) {
+          this.logger.debug(`✅ Matched EmailLog by emailLogId: ${emailLogId}`);
+        } else {
+          this.logger.warn(`⚠️ EmailLog not found for emailLogId: ${emailLogId}`);
+        }
+      } else {
+        this.logger.warn(`⚠️ Invalid emailLogId in custom_args: ${event.custom_args.emailLogId}`);
+      }
+    } else {
+      this.logger.debug(`ℹ️ No emailLogId in custom_args, trying fallback strategies...`);
     }
 
-    const emailLog = await scrapingClient.emailLog.findUnique({
-      where: { messageId: event.sg_message_id },
-      include: {
-        contact: true,
-      },
-    });
+    // Strategy 2 (Fallback): Try exact sg_message_id match
+    if (!emailLog && event.sg_message_id) {
+      emailLog = await scrapingClient.emailLog.findUnique({
+        where: { messageId: event.sg_message_id },
+        include: { contact: true },
+      });
+      
+      if (emailLog) {
+        this.logger.debug(`✅ Matched EmailLog by exact messageId: ${event.sg_message_id}`);
+      }
+    }
+
+    // Strategy 3 (Fallback): Try base messageId (extract part before first dot)
+    // sg_message_id format: "baseId.recvd-..." or "baseId"
+    if (!emailLog && event.sg_message_id) {
+      const baseMessageId = event.sg_message_id.split('.')[0];
+      if (baseMessageId !== event.sg_message_id) {
+        emailLog = await scrapingClient.emailLog.findUnique({
+          where: { messageId: baseMessageId },
+          include: { contact: true },
+        });
+        
+        if (emailLog) {
+          this.logger.debug(`✅ Matched EmailLog by base messageId: ${baseMessageId}`);
+        }
+      }
+    }
+
+    // Strategy 4 (Last Resort): Match by email + timestamp window
+    if (!emailLog && event.email) {
+      const eventTimestamp = new Date(event.timestamp * 1000);
+      const timeWindowStart = new Date(eventTimestamp.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+      const timeWindowEnd = new Date(eventTimestamp.getTime() + 60 * 60 * 1000); // 1 hour after
+      
+      emailLog = await scrapingClient.emailLog.findFirst({
+        where: {
+          contact: { email: event.email },
+          sentAt: { gte: timeWindowStart, lte: timeWindowEnd },
+          status: 'pending', // Only match pending emails
+        },
+        include: { contact: true },
+        orderBy: { sentAt: 'desc' },
+      });
+      
+      if (emailLog) {
+        this.logger.debug(`✅ Matched EmailLog by email + timestamp: ${event.email}`);
+      }
+    }
 
     if (!emailLog) {
-      this.logger.warn(`EmailLog not found for messageId: ${event.sg_message_id}`);
+      this.logger.warn(
+        `❌ EmailLog not found for webhook event. ` +
+        `sg_message_id: ${event.sg_message_id}, ` +
+        `email: ${event.email}, ` +
+        `event: ${event.event}, ` +
+        `custom_args: ${JSON.stringify(event.custom_args)}`
+      );
       return;
     }
 
@@ -207,29 +280,74 @@ export class BounceManagementService {
   private async handleBounce(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
+    // Classify bounce type
+    const bounceType = this.classifyBounceType(event.bounce_classification);
+    
+    // Store bounce details in providerResponse
+    const existingResponse = (emailLog.providerResponse as any) || {};
+    const bounceDetails = {
+      type: bounceType, // 'hard' or 'soft'
+      classification: event.bounce_classification || 'unknown',
+      reason: event.reason || null,
+      timestamp: new Date(event.timestamp * 1000).toISOString(),
+    };
+    
     await scrapingClient.emailLog.update({
       where: { id: emailLog.id },
       data: {
-        status: 'bounced',
+        status: 'bounced', // Same status for both hard and soft
+        providerResponse: {
+          ...existingResponse,
+          bounce: bounceDetails,
+        },
       },
     });
 
-    // Check if hard bounce
-    const isHardBounce = event.bounce_classification === '1' || // Invalid address
-                         event.bounce_classification === '10' || // Blocked
-                         event.type === 'bounce';
-
-    if (isHardBounce) {
-      // Update contact status
+    // Hard bounces: Update contact status (permanent failure - remove from future sends)
+    if (bounceType === 'hard') {
       await scrapingClient.contact.update({
         where: { id: emailLog.contactId },
         data: { status: 'bounced' },
       });
 
-      this.logger.warn(`⚠️ Hard bounce detected (EmailLog ID: ${emailLog.id}, Contact ID: ${emailLog.contactId})`);
+      this.logger.warn(
+        `⚠️ Hard bounce detected (EmailLog ID: ${emailLog.id}, ` +
+        `Contact ID: ${emailLog.contactId}, ` +
+        `Classification: ${event.bounce_classification}, ` +
+        `Reason: ${event.reason || 'N/A'})`
+      );
+    } else {
+      // Soft bounces: Log but don't mark contact as bounced (may retry later)
+      this.logger.warn(
+        `⏸️ Soft bounce detected (EmailLog ID: ${emailLog.id}, ` +
+        `Classification: ${event.bounce_classification}, ` +
+        `Reason: ${event.reason || 'N/A'})`
+      );
     }
 
-    this.logger.log(`✅ Bounce processed (EmailLog ID: ${emailLog.id}, Type: ${event.type})`);
+    this.logger.log(
+      `✅ Bounce processed (EmailLog ID: ${emailLog.id}, Type: ${bounceType}, Classification: ${event.bounce_classification})`
+    );
+  }
+
+  /**
+   * Classify bounce as hard or soft based on SendGrid's bounce_classification
+   */
+  private classifyBounceType(classification?: string): 'hard' | 'soft' {
+    if (!classification) {
+      return 'hard'; // Default to hard if unknown (fail-safe)
+    }
+
+    // Hard bounce classifications (permanent failures - remove from list)
+    const hardBounceCodes = ['1', '10', '11', '13'];
+    
+    if (hardBounceCodes.includes(classification)) {
+      return 'hard';
+    }
+
+    // Soft bounce classifications (temporary failures - may retry)
+    // Codes: 2, 3, 4, 5, 6, 7, 8, 9
+    return 'soft';
   }
 
   /**
@@ -305,15 +423,19 @@ export class BounceManagementService {
   }
 
   /**
-   * Get bounce statistics for a client
+   * Get bounce statistics for a client (with hard/soft breakdown)
    */
   async getBounceStats(clientId: number): Promise<{
     total: number;
     bounced: number;
+    hardBounces: number;
+    softBounces: number;
     blocked: number;
     dropped: number;
     spamreport: number;
     bounceRate: number;
+    hardBounceRate: number;
+    softBounceRate: number;
   }> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
@@ -323,11 +445,28 @@ export class BounceManagementService {
       },
       select: {
         status: true,
+        providerResponse: true,
       },
     });
 
     const total = emailLogs.length;
     const bounced = emailLogs.filter(log => log.status === 'bounced').length;
+    
+    // Count hard vs soft bounces from providerResponse
+    let hardBounces = 0;
+    let softBounces = 0;
+    
+    emailLogs.forEach(log => {
+      if (log.status === 'bounced' && log.providerResponse) {
+        const bounceData = (log.providerResponse as any)?.bounce;
+        if (bounceData?.type === 'hard') {
+          hardBounces++;
+        } else if (bounceData?.type === 'soft') {
+          softBounces++;
+        }
+      }
+    });
+    
     const blocked = emailLogs.filter(log => log.status === 'blocked').length;
     const dropped = emailLogs.filter(log => log.status === 'dropped').length;
     const spamreport = emailLogs.filter(log => log.status === 'spamreport').length;
@@ -335,10 +474,14 @@ export class BounceManagementService {
     return {
       total,
       bounced,
+      hardBounces,
+      softBounces,
       blocked,
       dropped,
       spamreport,
       bounceRate: total > 0 ? (bounced / total) * 100 : 0,
+      hardBounceRate: total > 0 ? (hardBounces / total) * 100 : 0,
+      softBounceRate: total > 0 ? (softBounces / total) * 100 : 0,
     };
   }
 }

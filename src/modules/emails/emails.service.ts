@@ -141,7 +141,23 @@ export class EmailsService {
       
       // Note: Unsubscribe link will be injected by sendEmail method
 
-      // 4. SEND VIA SENDGRID
+      // 4. CREATE EMAILLOG FIRST (before sending)
+      // This allows us to include emailLogId in custom args for reliable webhook matching
+      const emailLog = await scrapingClient.emailLog.create({
+        data: {
+          emailDraftId: draftId,
+          contactId: contact.id,
+          status: 'pending', // Will be updated to 'delivered' via webhook
+          messageId: `temp_${Date.now()}`, // Temporary, will be updated with actual messageId
+          trackingPixelToken: trackingToken,
+          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
+          spamScore: spamCheck.score,
+          sentVia: 'sendgrid',
+          sentAt: new Date(),
+        },
+      });
+
+      // 5. SEND VIA SENDGRID
       // Use client-specific API key if available, otherwise use global
       const apiKey = clientEmail.sendgridApiKey || process.env.SENDGRID_API_KEY;
       if (apiKey && apiKey !== process.env.SENDGRID_API_KEY) {
@@ -156,25 +172,17 @@ export class EmailsService {
         {
           unsubscribeToken,
           trackingPixelToken: trackingToken,
+          emailLogId: emailLog.id, // Pass EmailLog ID for webhook matching
         }
       );
 
-      // 5. CREATE EMAILLOG
-      const emailLog = await scrapingClient.emailLog.create({
-        data: {
-          emailDraftId: draftId,
-          contactId: contact.id,
-          status: 'pending', // Will be updated to 'delivered' via webhook
-          messageId: sendResult.messageId,
-          trackingPixelToken: trackingToken,
-          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
-          spamScore: spamCheck.score,
-          sentVia: 'sendgrid',
-          sentAt: new Date(),
-        },
+      // 6. UPDATE EMAILLOG with actual messageId from SendGrid response
+      await scrapingClient.emailLog.update({
+        where: { id: emailLog.id },
+        data: { messageId: sendResult.messageId },
       });
 
-      // 6. UPDATE STATUSES
+      // 7. UPDATE STATUSES
       await scrapingClient.emailDraft.update({
         where: { id: draftId },
         data: { status: 'sent' },

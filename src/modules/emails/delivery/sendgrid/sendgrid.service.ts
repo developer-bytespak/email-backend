@@ -29,6 +29,7 @@ export class SendGridService {
       messageId?: string;
       unsubscribeToken?: string;
       trackingPixelToken?: string;
+      emailLogId?: number; // EmailLog ID for webhook matching via custom args
     }
   ): Promise<{ messageId: string; response: any }> {
     try {
@@ -46,7 +47,16 @@ export class SendGridService {
       }
 
       // Prepare SendGrid message
-      const msg: MailDataRequired = {
+      // Note: SendGrid requires customArgs to be in personalizations, not at top level
+      const personalizationCustomArgs = options?.emailLogId 
+        ? { emailLogId: options.emailLogId.toString() }
+        : undefined;
+
+      if (options?.emailLogId) {
+        this.logger.debug(`📧 Including emailLogId in customArgs: ${options.emailLogId}`);
+      }
+
+      const msg: any = {
         to,
         from,
         subject,
@@ -62,6 +72,16 @@ export class SendGridService {
             enableText: true,
           },
         },
+        
+        // Add custom arguments in personalizations (REQUIRED by SendGrid)
+        // SendGrid only includes customArgs in webhooks when they're in personalizations
+        // SendGrid will echo these back in all webhook events
+        personalizations: [
+          {
+            to: [{ email: to }],
+            customArgs: personalizationCustomArgs,
+          },
+        ],
       };
 
       // Send email via SendGrid
@@ -70,7 +90,10 @@ export class SendGridService {
       // Extract message ID from response headers
       const messageId = response.headers['x-message-id'] as string;
 
-      this.logger.log(`✅ Email sent via SendGrid (Message ID: ${messageId})`);
+      this.logger.log(
+        `✅ Email sent via SendGrid (Message ID: ${messageId}, ` +
+        `EmailLog ID: ${options?.emailLogId || 'N/A'})`
+      );
 
       return {
         messageId: messageId || `sg_${Date.now()}`,

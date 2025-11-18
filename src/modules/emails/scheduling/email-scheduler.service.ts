@@ -195,6 +195,22 @@ export class EmailSchedulerService implements OnModuleInit {
       
       // Note: Unsubscribe link will be injected by sendEmail method
 
+      // Create EmailLog FIRST (before sending)
+      // This allows us to include emailLogId in custom args for reliable webhook matching
+      const emailLog = await scrapingClient.emailLog.create({
+        data: {
+          emailDraftId: draft.id,
+          contactId: contact.id,
+          status: 'pending',
+          messageId: `temp_${Date.now()}`, // Temporary, will be updated with actual messageId
+          trackingPixelToken: trackingToken,
+          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
+          spamScore: spamCheck.score,
+          sentVia: 'sendgrid',
+          sentAt: new Date(),
+        },
+      });
+
       // Send via SendGrid
       const apiKey = clientEmail.sendgridApiKey || process.env.SENDGRID_API_KEY;
       if (apiKey && apiKey !== process.env.SENDGRID_API_KEY) {
@@ -209,22 +225,14 @@ export class EmailSchedulerService implements OnModuleInit {
         {
           unsubscribeToken,
           trackingPixelToken: trackingToken,
+          emailLogId: emailLog.id, // Pass EmailLog ID for webhook matching
         }
       );
 
-      // Create EmailLog
-      const emailLog = await scrapingClient.emailLog.create({
-        data: {
-          emailDraftId: draft.id,
-          contactId: contact.id,
-          status: 'pending',
-          messageId: sendResult.messageId,
-          trackingPixelToken: trackingToken,
-          unsubscribeToken: unsubscribeToken, // Store unsubscribe token
-          spamScore: spamCheck.score,
-          sentVia: 'sendgrid',
-          sentAt: new Date(),
-        },
+      // Update EmailLog with actual messageId from SendGrid response
+      await scrapingClient.emailLog.update({
+        where: { id: emailLog.id },
+        data: { messageId: sendResult.messageId },
       });
 
       // Update draft status
