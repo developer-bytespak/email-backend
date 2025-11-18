@@ -231,9 +231,9 @@ export class UnsubscribeService {
   }
 
   /**
-   * Get all unsubscribe records
+   * Get unsubscribe records scoped to a client
    */
-  async getAllUnsubscribes(): Promise<
+  async getClientUnsubscribes(clientId: number): Promise<
     Array<{
       id: number;
       contactId: number;
@@ -247,6 +247,13 @@ export class UnsubscribeService {
     const scrapingClient = await this.prisma.getScrapingClient();
 
     const records = await scrapingClient.emailUnsubscribe.findMany({
+      where: {
+        contact: {
+          csvUpload: {
+            clientId,
+          },
+        },
+      },
       orderBy: {
         unsubscribedAt: 'desc',
       },

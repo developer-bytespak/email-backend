@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, Res, UseGuards, Request, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Param, Body, Res, UseGuards, Request, ParseIntPipe, UnauthorizedException } from '@nestjs/common';
 import type { Response } from 'express';
 import { UnsubscribeService } from './unsubscribe.service';
 import { IsOptional, IsString } from 'class-validator';
@@ -15,12 +15,18 @@ export class UnsubscribeController {
   constructor(private readonly unsubscribeService: UnsubscribeService) {}
 
   /**
-   * Get all unsubscribe records (dashboard API)
+   * Get unsubscribe records for the authenticated client
    * GET /emails/unsubscribe/all
    */
+  @UseGuards(JwtAuthGuard)
   @Get('all')
-  async getAllUnsubscribes() {
-    const data = await this.unsubscribeService.getAllUnsubscribes();
+  async getAllUnsubscribes(@Request() req) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    const data = await this.unsubscribeService.getClientUnsubscribes(clientId);
     return {
       success: true,
       count: data.length,
