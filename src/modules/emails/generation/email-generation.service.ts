@@ -28,6 +28,12 @@ export type EmailTone = 'friendly' | 'professional' | 'pro_friendly';
 @Injectable()
 export class EmailGenerationService {
   private readonly logger = new Logger(EmailGenerationService.name);
+  
+  // Queue system for rate limiting
+  private requestQueue: Array<() => Promise<any>> = [];
+  private isProcessing = false;
+  private lastRequestTime = 0;
+  private readonly RATE_LIMIT_DELAY = 40000; // 40 seconds delay between requests
 
   constructor(
     private readonly prisma: PrismaService,
@@ -179,54 +185,98 @@ export class EmailGenerationService {
   }
 
   /**
-   * Call Gemini API specifically for email generation
+   * Call Gemini API specifically for email generation with rate limiting queue
    */
   private async callGeminiAPIForEmail(prompt: string): Promise<{ text: string; tokensUsed: number }> {
-    const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
-
-    const response = await fetch(GEMINI_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': GEMINI_API_KEY,
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: prompt
-          }]
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          topK: 40,
-          topP: 0.95,
-          maxOutputTokens: 1024
-        },
-        safetySettings: [
-          {
-            category: "HARM_CATEGORY_HARASSMENT",
-            threshold: "BLOCK_MEDIUM_AND_ABOVE"
+    return new Promise((resolve, reject) => {
+      this.requestQueue.push(async () => {
+        try {
+          // Rate limiting - wait 40 seconds since last request
+          const timeSinceLastRequest = Date.now() - this.lastRequestTime;
+          if (timeSinceLastRequest < this.RATE_LIMIT_DELAY) {
+            const waitTime = this.RATE_LIMIT_DELAY - timeSinceLastRequest;
+            this.logger.log(`⏳ Rate limiting: waiting ${Math.round(waitTime / 1000)} seconds before next email generation request`);
+            await this.sleep(waitTime);
           }
-        ]
-      })
+
+          const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
+          const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
+
+          const response = await fetch(GEMINI_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': GEMINI_API_KEY,
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [{
+                  text: prompt
+                }]
+              }],
+              generationConfig: {
+                temperature: 0.7,
+                topK: 40,
+                topP: 0.95,
+                maxOutputTokens: 1024
+              },
+              safetySettings: [
+                {
+                  category: "HARM_CATEGORY_HARASSMENT",
+                  threshold: "BLOCK_MEDIUM_AND_ABOVE"
+                }
+              ]
+            })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+          }
+
+          const data = await response.json();
+
+          if (data.candidates && data.candidates.length > 0) {
+            this.lastRequestTime = Date.now();
+            resolve({
+              text: data.candidates[0].content.parts[0].text,
+              tokensUsed: data.usageMetadata?.totalTokenCount || 0
+            });
+          } else {
+            throw new Error('No response generated from Gemini API');
+          }
+
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      this.processQueue();
     });
+  }
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+  /**
+   * Process request queue sequentially
+   */
+  private async processQueue() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+
+    while (this.requestQueue.length > 0) {
+      const request = this.requestQueue.shift();
+      if (request) {
+        await request();
+      }
     }
 
-    const data = await response.json();
+    this.isProcessing = false;
+  }
 
-    if (data.candidates && data.candidates.length > 0) {
-      return {
-        text: data.candidates[0].content.parts[0].text,
-        tokensUsed: data.usageMetadata?.totalTokenCount || 0
-      };
-    } else {
-      throw new Error('No response generated from Gemini API');
-    }
+  /**
+   * Sleep utility for rate limiting
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

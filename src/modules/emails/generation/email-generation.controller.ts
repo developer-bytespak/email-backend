@@ -125,13 +125,29 @@ export class EmailGenerationController {
 
   /**
    * Bulk generate email drafts for multiple contacts
+   * Uses queue system with 40 second delay between requests
    */
   @Post('bulk-generate')
   @HttpCode(HttpStatus.CREATED)
   async bulkGenerateEmailDrafts(@Body() requests: GenerateEmailDto[]) {
+    const startTime = Date.now();
     const results: any[] = [];
+    const totalRequests = requests.length;
+    const estimatedTimePerRequest = 40; // seconds (rate limit delay)
+    const estimatedTotalTime = totalRequests * estimatedTimePerRequest;
     
-    for (const request of requests) {
+    for (let i = 0; i < requests.length; i++) {
+      const request = requests[i];
+      const currentIndex = i + 1;
+      const elapsedTime = Math.round((Date.now() - startTime) / 1000);
+      const estimatedTimeRemaining = Math.max(0, (totalRequests - currentIndex) * estimatedTimePerRequest);
+      
+      // this.logger.log(
+      //   `📧 Generating email ${currentIndex}/${totalRequests} | ` +
+      //   `Elapsed: ${elapsedTime}s | ` +
+      //   `Estimated remaining: ${estimatedTimeRemaining}s`
+      // );
+      
       const result = await this.emailGenerationService.generateEmailDraft({
         contactId: request.contactId,
         summaryId: request.summaryId,
@@ -141,10 +157,14 @@ export class EmailGenerationController {
       results.push(result);
     }
 
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
+
     return {
       totalProcessed: requests.length,
       successful: results.filter(r => r.success).length,
       failed: results.filter(r => !r.success).length,
+      totalTimeSeconds: totalTime,
+      estimatedTimeSeconds: estimatedTotalTime,
       results,
     };
   }
