@@ -114,12 +114,26 @@ export class SummarizationController {
    * Bulk generate summaries for multiple contacts
    * POST /summarization/bulk-generate
    * Body: { contactIds: number[] }
+   * Uses queue system with 40 second delay between requests
    */
   @Post('bulk-generate')
   @HttpCode(HttpStatus.CREATED)
   async bulkSummarizeContacts(@Body(ValidationPipe) bulkDto: BulkSummarizeDto) {
     try {
+      const startTime = Date.now();
+      const totalRequests = bulkDto.contactIds.length;
+      const estimatedTimePerRequest = 40; // seconds (rate limit delay)
+      const estimatedTotalTime = totalRequests * estimatedTimePerRequest;
+      
+      // Log initial estimate
+      console.log(
+        `📊 Starting bulk summarization for ${totalRequests} contacts | ` +
+        `Estimated time: ${estimatedTotalTime}s (${Math.round(estimatedTotalTime / 60)} minutes)`
+      );
+      
       const result = await this.summarizationService.bulkSummarizeContacts(bulkDto.contactIds);
+      
+      const totalTime = Math.round((Date.now() - startTime) / 1000);
       
       return {
         message: 'Bulk summarization completed',
@@ -127,6 +141,8 @@ export class SummarizationController {
         totalProcessed: result.totalProcessed,
         successful: result.successful,
         failed: result.failed,
+        totalTimeSeconds: totalTime,
+        estimatedTimeSeconds: estimatedTotalTime,
         results: result.results,
       };
     } catch (error) {

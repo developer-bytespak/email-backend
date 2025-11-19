@@ -23,6 +23,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json"
   },
   "dependencies": {
+    "@langchain/core": "^1.0.6",
+    "@langchain/google-genai": "^1.0.3",
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.1",
@@ -39,6 +41,7 @@
     "cookie-parser": "^1.4.7",
     "csv-parser": "^3.0.0",
     "dotenv": "^16.4.5",
+    "langchain": "^1.0.6",
     "multer": "^1.4.5-lts.1",
     "passport-jwt": "^4.0.1",
     "playwright": "^1.56.1",

@@ -20,7 +20,7 @@ export class LlmClientService {
   private requestQueue: Array<() => Promise<any>> = [];
   private isProcessing = false;
   private lastRequestTime = 0;
-  private readonly RATE_LIMIT_DELAY = 2000; // 2 seconds (30 req/min) - adjusted for free tier
+  private readonly RATE_LIMIT_DELAY = 40000; // 40 seconds delay between requests to avoid rate limits
 
   async generateSummary(content: string): Promise<GeminiResponse> {
     const startTime = Date.now();

@@ -92,13 +92,29 @@ export class SmsGenerationController {
 
   /**
    * Bulk generate SMS drafts for multiple contacts
+   * Uses queue system with 40 second delay between requests (via llmClient)
    */
   @Post('bulk-generate')
   @HttpCode(HttpStatus.CREATED)
   async bulkGenerateSmsDrafts(@Body() requests: GenerateSmsDto[]) {
+    const startTime = Date.now();
     const results: any[] = [];
+    const totalRequests = requests.length;
+    const estimatedTimePerRequest = 40; // seconds (rate limit delay)
+    const estimatedTotalTime = totalRequests * estimatedTimePerRequest;
 
-    for (const request of requests) {
+    for (let i = 0; i < requests.length; i++) {
+      const request = requests[i];
+      const currentIndex = i + 1;
+      const elapsedTime = Math.round((Date.now() - startTime) / 1000);
+      const estimatedTimeRemaining = Math.max(0, (totalRequests - currentIndex) * estimatedTimePerRequest);
+      
+      console.log(
+        `📱 Generating SMS ${currentIndex}/${totalRequests} | ` +
+        `Elapsed: ${elapsedTime}s | ` +
+        `Estimated remaining: ${estimatedTimeRemaining}s`
+      );
+      
       const result = await this.smsGenerationService.generateSmsDraft({
         contactId: request.contactId,
         summaryId: request.summaryId,
@@ -107,10 +123,14 @@ export class SmsGenerationController {
       results.push(result);
     }
 
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
+
     return {
       totalProcessed: requests.length,
       successful: results.filter((r) => r.success).length,
       failed: results.filter((r) => !r.success).length,
+      totalTimeSeconds: totalTime,
+      estimatedTimeSeconds: estimatedTotalTime,
       results,
     };
   }

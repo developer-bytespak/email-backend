@@ -260,7 +260,7 @@ export class SummarizationService {
 
   /**
    * Bulk summarize multiple contacts
-   * Processes contacts sequentially to respect rate limits
+   * Processes contacts sequentially to respect rate limits (40 second delay between requests)
    */
   async bulkSummarizeContacts(contactIds: number[]): Promise<{
     totalProcessed: number;
@@ -269,9 +269,23 @@ export class SummarizationService {
     results: SummarizationResult[];
   }> {
     const results: SummarizationResult[] = [];
+    const startTime = Date.now();
+    const totalContacts = contactIds.length;
+    const estimatedTimePerRequest = 40; // seconds (rate limit delay)
 
     // Process sequentially (one-by-one) to respect LLM rate limits
-    for (const contactId of contactIds) {
+    for (let i = 0; i < contactIds.length; i++) {
+      const contactId = contactIds[i];
+      const currentIndex = i + 1;
+      const elapsedTime = Math.round((Date.now() - startTime) / 1000);
+      const estimatedTimeRemaining = Math.max(0, (totalContacts - currentIndex) * estimatedTimePerRequest);
+      
+      this.logger.log(
+        `📊 Summarizing contact ${currentIndex}/${totalContacts} (ID: ${contactId}) | ` +
+        `Elapsed: ${elapsedTime}s | ` +
+        `Estimated remaining: ${estimatedTimeRemaining}s`
+      );
+      
       const result = await this.summarizeContact(contactId);
       results.push(result);
     }
