@@ -41,10 +41,12 @@ export class SendGridService {
         processedHtml = this.injectUnsubscribeLink(processedHtml, options.unsubscribeToken, baseUrl);
       }
 
-      // Optional: Inject custom tracking pixel (backup method)
-      if (options?.trackingPixelToken) {
-        processedHtml = this.injectTrackingPixel(processedHtml, options.trackingPixelToken, baseUrl);
-      }
+      // DISABLED: Custom tracking pixel - using SendGrid's native open tracking instead
+      // SendGrid's native tracking is enabled in trackingSettings.openTracking
+      // This prevents Gmail spam warnings from custom 1x1 images
+      // if (options?.trackingPixelToken) {
+      //   processedHtml = this.injectTrackingPixel(processedHtml, options.trackingPixelToken, baseUrl);
+      // }
 
       // Prepare SendGrid message
       // Note: SendGrid requires customArgs to be in personalizations, not at top level
@@ -54,6 +56,9 @@ export class SendGridService {
 
       if (options?.emailLogId) {
         this.logger.debug(`📧 Including emailLogId in customArgs: ${options.emailLogId}`);
+        this.logger.debug(`📧 Personalization customArgs: ${JSON.stringify(personalizationCustomArgs)}`);
+      } else {
+        this.logger.warn(`⚠️ No emailLogId provided - customArgs will not be included in webhooks`);
       }
 
       const msg: any = {
@@ -83,6 +88,14 @@ export class SendGridService {
           },
         ],
       };
+      
+      // Log the message structure for debugging (without sensitive data)
+      this.logger.debug(
+        `📧 SendGrid message structure: ` +
+        `hasPersonalizations: ${!!msg.personalizations}, ` +
+        `hasCustomArgs: ${!!msg.personalizations?.[0]?.customArgs}, ` +
+        `customArgs: ${JSON.stringify(msg.personalizations?.[0]?.customArgs)}`
+      );
 
       // Send email via SendGrid
       const [response] = await sgMail.send(msg);
