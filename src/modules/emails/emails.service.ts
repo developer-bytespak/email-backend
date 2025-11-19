@@ -132,12 +132,14 @@ export class EmailsService {
       // Convert plain text to HTML format (handles newlines properly)
       let processedBody = this.sendGridService.convertTextToHtml(draft.bodyText);
       
-      // Replace links with tracking URLs
-      processedBody = this.sendGridService.replaceLinksWithTracking(
-        processedBody,
-        trackingToken,
-        baseUrl
-      );
+      // DISABLED: Custom click tracking - using SendGrid's native click tracking instead
+      // SendGrid automatically wraps links when clickTracking is enabled in trackingSettings
+      // This prevents duplicate tracking and ensures better deliverability
+      // processedBody = this.sendGridService.replaceLinksWithTracking(
+      //   processedBody,
+      //   trackingToken,
+      //   baseUrl
+      // );
       
       // Note: Unsubscribe link will be injected by sendEmail method
 

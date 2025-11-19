@@ -3,7 +3,7 @@ import { PrismaService } from '../../../config/prisma.service';
 
 export interface SendGridWebhookEvent {
   email: string;
-  timestamp: number;
+  timestamp: number | string; // SendGrid can send as ISO string or Unix timestamp
   event: string;
   sg_message_id?: string;
   sg_event_id?: string;
@@ -32,16 +32,29 @@ export class BounceManagementService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Parse timestamp from SendGrid webhook (handles both ISO string and Unix timestamp)
+   */
+  private parseTimestamp(timestamp: number | string): Date {
+    if (typeof timestamp === 'string') {
+      return new Date(timestamp);
+    }
+    // Unix timestamp in seconds, convert to milliseconds
+    return new Date(timestamp * 1000);
+  }
+
+  /**
    * Process webhook event from SendGrid
    */
   async processWebhookEvent(event: SendGridWebhookEvent): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
-    // Log webhook event details for debugging
+    // Enhanced logging to debug custom_args
     this.logger.debug(
       `📥 Webhook event received: ${event.event}, ` +
       `sg_message_id: ${event.sg_message_id}, ` +
-      `custom_args: ${JSON.stringify(event.custom_args)}`
+      `custom_args: ${JSON.stringify(event.custom_args)}, ` +
+      `custom_args type: ${typeof event.custom_args}, ` +
+      `custom_args present: ${!!event.custom_args}`
     );
     
     let emailLog: any = null;
@@ -98,7 +111,7 @@ export class BounceManagementService {
 
     // Strategy 4 (Last Resort): Match by email + timestamp window
     if (!emailLog && event.email) {
-      const eventTimestamp = new Date(event.timestamp * 1000);
+      const eventTimestamp = this.parseTimestamp(event.timestamp);
       const timeWindowStart = new Date(eventTimestamp.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
       const timeWindowEnd = new Date(eventTimestamp.getTime() + 60 * 60 * 1000); // 1 hour after
       
@@ -167,22 +180,78 @@ export class BounceManagementService {
 
   /**
    * Handle processed event - SendGrid accepted and queued the email
+   * Uses timestamp-based logic (foolproof, doesn't rely on custom_args)
    */
   private async handleProcessed(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
+    const eventTimestamp = this.parseTimestamp(event.timestamp);
+    const existingDeliveredAt = emailLog.deliveredAt ? new Date(emailLog.deliveredAt) : null;
+    const existingProcessedAt = emailLog.processedAt ? new Date(emailLog.processedAt) : null;
+    
+    // FOOLPROOF LOGIC: Use timestamps to determine if we should update status
+    // Rule: Only update status to 'processed' if:
+    // 1. Current status is 'pending' (initial state), OR
+    // 2. Email hasn't been delivered yet (no deliveredAt), OR
+    // 3. This processed event is earlier than deliveredAt (out-of-order webhook)
+    const shouldUpdateStatus = 
+      emailLog.status === 'pending' || 
+      !existingDeliveredAt || 
+      (existingDeliveredAt && eventTimestamp < existingDeliveredAt);
+    
+    // Enhanced logging for status transitions
+    this.logger.debug(
+      `📊 Processed event status check: EmailLog ID: ${emailLog.id}, ` +
+      `Current status: ${emailLog.status}, ` +
+      `Event timestamp: ${eventTimestamp.toISOString()}, ` +
+      `Existing deliveredAt: ${existingDeliveredAt?.toISOString() || 'null'}, ` +
+      `Existing processedAt: ${existingProcessedAt?.toISOString() || 'null'}, ` +
+      `Should update status: ${shouldUpdateStatus}`
+    );
+    
+    if (!shouldUpdateStatus) {
+      this.logger.debug(
+        `⏭️ Skipping status update for processed event (EmailLog ID: ${emailLog.id}, ` +
+        `Current status: ${emailLog.status}, ` +
+        `DeliveredAt exists: ${!!existingDeliveredAt}, ` +
+        `Event is after delivery: ${existingDeliveredAt ? eventTimestamp > existingDeliveredAt : false})`
+      );
+    }
+    
+    // Build update data - always update processedAt (it's a timestamp, not status)
+    const updateData: any = {
+      processedAt: eventTimestamp,
+      smtpId: event.smtp_id,
+      templateId: event.template_id,
+    };
+    
+    // Only update status if conditions are met (prevent downgrading from delivered)
+    if (shouldUpdateStatus) {
+      updateData.status = 'processed';
+    }
+    
+    // Only store customArgs if present and not empty (avoid storing null/undefined)
+    if (event.custom_args && Object.keys(event.custom_args).length > 0) {
+      updateData.customArgs = event.custom_args;
+    }
+    // If no custom_args, don't include the field (Prisma will keep existing value)
+    
     await scrapingClient.emailLog.update({
       where: { id: emailLog.id },
-      data: {
-        status: 'processed',
-        processedAt: new Date(event.timestamp * 1000),
-        smtpId: event.smtp_id,
-        templateId: event.template_id,
-        customArgs: event.custom_args ? JSON.parse(JSON.stringify(event.custom_args)) : null,
-      },
+      data: updateData,
     });
 
-    this.logger.log(`✅ Email processed by SendGrid (EmailLog ID: ${emailLog.id})`);
+    // Log the final status after update
+    const updatedLog = await scrapingClient.emailLog.findUnique({
+      where: { id: emailLog.id },
+      select: { status: true },
+    });
+    
+    this.logger.log(
+      `✅ Email processed by SendGrid (EmailLog ID: ${emailLog.id}, ` +
+      `Status: ${updatedLog?.status || 'unknown'}, ` +
+      `ProcessedAt: ${this.parseTimestamp(event.timestamp).toISOString()})`
+    );
   }
 
   /**
@@ -191,13 +260,22 @@ export class BounceManagementService {
   private async handleDeferred(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
+    // Build update data
+    const updateData: any = {
+      status: 'deferred',
+      deferredAt: this.parseTimestamp(event.timestamp),
+      retryAttempt: event.attempt || 1,
+    };
+    
+    // Only store customArgs if present and not empty (avoid storing null/undefined)
+    if (event.custom_args && Object.keys(event.custom_args).length > 0) {
+      updateData.customArgs = event.custom_args;
+    }
+    // If no custom_args, don't include the field (Prisma will keep existing value)
+    
     await scrapingClient.emailLog.update({
       where: { id: emailLog.id },
-      data: {
-        status: 'deferred',
-        deferredAt: new Date(event.timestamp * 1000),
-        retryAttempt: event.attempt || 1,
-      },
+      data: updateData,
     });
 
     this.logger.warn(
@@ -226,7 +304,7 @@ export class BounceManagementService {
           emailLogId: emailLog.id,
           contactId: emailLog.contactId,
           engagementType: 'open',
-          engagedAt: new Date(event.timestamp * 1000), // Convert Unix timestamp
+          engagedAt: this.parseTimestamp(event.timestamp),
         },
       });
 
@@ -250,7 +328,7 @@ export class BounceManagementService {
         contactId: emailLog.contactId,
         engagementType: 'click',
         url: event.url,
-        engagedAt: new Date(event.timestamp * 1000),
+        engagedAt: this.parseTimestamp(event.timestamp),
       },
     });
 
@@ -259,19 +337,63 @@ export class BounceManagementService {
 
   /**
    * Handle delivered event
+   * Uses timestamp-based logic (foolproof, doesn't rely on custom_args)
+   * Always updates to delivered - this is the final delivery status
    */
   private async handleDelivered(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
+    const eventTimestamp = this.parseTimestamp(event.timestamp);
+    const existingDeliveredAt = emailLog.deliveredAt ? new Date(emailLog.deliveredAt) : null;
+    const existingProcessedAt = emailLog.processedAt ? new Date(emailLog.processedAt) : null;
+    
+    // FOOLPROOF LOGIC: Always update to 'delivered' - it's the final delivery status
+    // However, only update deliveredAt if this event is newer (handle duplicate webhooks)
+    const shouldUpdateDeliveredAt = !existingDeliveredAt || eventTimestamp >= existingDeliveredAt;
+    
+    // Enhanced logging for status transitions
+    this.logger.debug(
+      `📊 Delivered event status check: EmailLog ID: ${emailLog.id}, ` +
+      `Current status: ${emailLog.status}, ` +
+      `Event timestamp: ${eventTimestamp.toISOString()}, ` +
+      `Existing deliveredAt: ${existingDeliveredAt?.toISOString() || 'null'}, ` +
+      `Existing processedAt: ${existingProcessedAt?.toISOString() || 'null'}, ` +
+      `Will always set status to: delivered`
+    );
+    
+    // Build update data
+    const updateData: any = {
+      status: 'delivered', // Always update to delivered (this is the final delivery status)
+    };
+    
+    // Only update deliveredAt if this is a new or later delivery event
+    if (shouldUpdateDeliveredAt) {
+      updateData.deliveredAt = eventTimestamp;
+    }
+    
+    // Only store customArgs if present and not empty (avoid storing null/undefined)
+    if (event.custom_args && Object.keys(event.custom_args).length > 0) {
+      updateData.customArgs = event.custom_args;
+    }
+    // If no custom_args, don't include the field (Prisma will keep existing value)
+    
     await scrapingClient.emailLog.update({
       where: { id: emailLog.id },
-      data: {
-        status: 'delivered',
-        deliveredAt: new Date(event.timestamp * 1000),
-      },
+      data: updateData,
     });
 
-    this.logger.log(`✅ Email delivered (EmailLog ID: ${emailLog.id})`);
+    // Log the final status after update
+    const updatedLog = await scrapingClient.emailLog.findUnique({
+      where: { id: emailLog.id },
+      select: { status: true, deliveredAt: true, processedAt: true },
+    });
+    
+    this.logger.log(
+      `✅ Email delivered (EmailLog ID: ${emailLog.id}, ` +
+      `Status: ${updatedLog?.status || 'unknown'}, ` +
+      `DeliveredAt: ${updatedLog?.deliveredAt ? new Date(updatedLog.deliveredAt).toISOString() : 'null'}, ` +
+      `ProcessedAt: ${updatedLog?.processedAt ? new Date(updatedLog.processedAt).toISOString() : 'null'})`
+    );
   }
 
   /**
@@ -289,7 +411,7 @@ export class BounceManagementService {
       type: bounceType, // 'hard' or 'soft'
       classification: event.bounce_classification || 'unknown',
       reason: event.reason || null,
-      timestamp: new Date(event.timestamp * 1000).toISOString(),
+      timestamp: this.parseTimestamp(event.timestamp).toISOString(),
     };
     
     await scrapingClient.emailLog.update({
@@ -414,7 +536,7 @@ export class BounceManagementService {
         data: {
           contactId: emailLog.contactId,
           unsubscribeEmailLogId: emailLog.id,
-          unsubscribedAt: new Date(event.timestamp * 1000),
+          unsubscribedAt: this.parseTimestamp(event.timestamp),
         },
       });
 

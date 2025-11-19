@@ -44,6 +44,12 @@ export class SendGridWebhookController {
     // Body is already deduplicated by WebhookDeduplicationInterceptor
     const events = Array.isArray(body) ? body : [body];
 
+    // Log webhook receipt
+    console.log(`📥 Webhook received: ${events.length} event(s)`);
+    events.forEach((event, index) => {
+      console.log(`  Event ${index + 1}: ${event.event}, sg_message_id: ${event.sg_message_id}, email: ${event.email}`);
+    });
+
     const startTime = Date.now();
 
     // Process each event with primary handler (synchronous)

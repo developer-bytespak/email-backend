@@ -9,6 +9,9 @@ export class SendGridSignatureGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
     
+    // Log webhook request received
+    this.logger.log(`📥 Webhook request received: ${request.method} ${request.url}`);
+    
     // Get signature and timestamp from headers
     const signature = request.headers['x-twilio-email-event-webhook-signature'] as string;
     const timestamp = request.headers['x-twilio-email-event-webhook-timestamp'] as string;
@@ -21,6 +24,8 @@ export class SendGridSignatureGuard implements CanActivate {
       this.logger.warn('⚠️ SENDGRID_WEBHOOK_VERIFICATION_KEY not set - skipping signature verification');
       return true;
     }
+    
+    this.logger.debug(`🔐 Signature present: ${!!signature}, Timestamp present: ${!!timestamp}`);
     
     // Both signature and timestamp are required for verification
     if (!signature || !timestamp) {
