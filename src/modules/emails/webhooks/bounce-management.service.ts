@@ -48,41 +48,20 @@ export class BounceManagementService {
   async processWebhookEvent(event: SendGridWebhookEvent): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
-    // Enhanced logging to debug custom_args
+    // Log webhook event - using timestamp-based matching (like frontend)
     this.logger.debug(
       `📥 Webhook event received: ${event.event}, ` +
       `sg_message_id: ${event.sg_message_id}, ` +
-      `custom_args: ${JSON.stringify(event.custom_args)}, ` +
-      `custom_args type: ${typeof event.custom_args}, ` +
-      `custom_args present: ${!!event.custom_args}`
+      `email: ${event.email}, ` +
+      `timestamp: ${this.parseTimestamp(event.timestamp).toISOString()}`
     );
     
     let emailLog: any = null;
 
-    // Strategy 1 (Primary): Match by emailLogId from custom_args
-    // Most reliable: Direct database primary key lookup
-    if (event.custom_args?.emailLogId) {
-      const emailLogId = parseInt(event.custom_args.emailLogId, 10);
-      if (!isNaN(emailLogId)) {
-        emailLog = await scrapingClient.emailLog.findUnique({
-          where: { id: emailLogId },
-          include: { contact: true },
-        });
-        
-        if (emailLog) {
-          this.logger.debug(`✅ Matched EmailLog by emailLogId: ${emailLogId}`);
-        } else {
-          this.logger.warn(`⚠️ EmailLog not found for emailLogId: ${emailLogId}`);
-        }
-      } else {
-        this.logger.warn(`⚠️ Invalid emailLogId in custom_args: ${event.custom_args.emailLogId}`);
-      }
-    } else {
-      this.logger.debug(`ℹ️ No emailLogId in custom_args, trying fallback strategies...`);
-    }
-
-    // Strategy 2 (Fallback): Try exact sg_message_id match
-    if (!emailLog && event.sg_message_id) {
+    // PRIMARY STRATEGY: Match by sg_message_id (timestamp-based approach)
+    // SendGrid always includes sg_message_id, making this the most reliable method
+    if (event.sg_message_id) {
+      // Try exact match first
       emailLog = await scrapingClient.emailLog.findUnique({
         where: { messageId: event.sg_message_id },
         include: { contact: true },
@@ -90,43 +69,20 @@ export class BounceManagementService {
       
       if (emailLog) {
         this.logger.debug(`✅ Matched EmailLog by exact messageId: ${event.sg_message_id}`);
-      }
-    }
-
-    // Strategy 3 (Fallback): Try base messageId (extract part before first dot)
-    // sg_message_id format: "baseId.recvd-..." or "baseId"
-    if (!emailLog && event.sg_message_id) {
-      const baseMessageId = event.sg_message_id.split('.')[0];
-      if (baseMessageId !== event.sg_message_id) {
-        emailLog = await scrapingClient.emailLog.findUnique({
-          where: { messageId: baseMessageId },
-          include: { contact: true },
-        });
-        
-        if (emailLog) {
-          this.logger.debug(`✅ Matched EmailLog by base messageId: ${baseMessageId}`);
+      } else {
+        // Try base messageId (extract part before first dot)
+        // sg_message_id format: "baseId.recvd-..." or "baseId"
+        const baseMessageId = event.sg_message_id.split('.')[0];
+        if (baseMessageId !== event.sg_message_id) {
+          emailLog = await scrapingClient.emailLog.findUnique({
+            where: { messageId: baseMessageId },
+            include: { contact: true },
+          });
+          
+          if (emailLog) {
+            this.logger.debug(`✅ Matched EmailLog by base messageId: ${baseMessageId}`);
+          }
         }
-      }
-    }
-
-    // Strategy 4 (Last Resort): Match by email + timestamp window
-    if (!emailLog && event.email) {
-      const eventTimestamp = this.parseTimestamp(event.timestamp);
-      const timeWindowStart = new Date(eventTimestamp.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
-      const timeWindowEnd = new Date(eventTimestamp.getTime() + 60 * 60 * 1000); // 1 hour after
-      
-      emailLog = await scrapingClient.emailLog.findFirst({
-        where: {
-          contact: { email: event.email },
-          sentAt: { gte: timeWindowStart, lte: timeWindowEnd },
-          status: 'pending', // Only match pending emails
-        },
-        include: { contact: true },
-        orderBy: { sentAt: 'desc' },
-      });
-      
-      if (emailLog) {
-        this.logger.debug(`✅ Matched EmailLog by email + timestamp: ${event.email}`);
       }
     }
 
@@ -136,7 +92,7 @@ export class BounceManagementService {
         `sg_message_id: ${event.sg_message_id}, ` +
         `email: ${event.email}, ` +
         `event: ${event.event}, ` +
-        `custom_args: ${JSON.stringify(event.custom_args)}`
+        `timestamp: ${this.parseTimestamp(event.timestamp).toISOString()}`
       );
       return;
     }
@@ -180,7 +136,7 @@ export class BounceManagementService {
 
   /**
    * Handle processed event - SendGrid accepted and queued the email
-   * Uses timestamp-based logic (foolproof, doesn't rely on custom_args)
+   * Uses timestamp-based logic (like frontend) - never downgrades status
    */
   private async handleProcessed(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
@@ -189,15 +145,12 @@ export class BounceManagementService {
     const existingDeliveredAt = emailLog.deliveredAt ? new Date(emailLog.deliveredAt) : null;
     const existingProcessedAt = emailLog.processedAt ? new Date(emailLog.processedAt) : null;
     
-    // FOOLPROOF LOGIC: Use timestamps to determine if we should update status
-    // Rule: Only update status to 'processed' if:
-    // 1. Current status is 'pending' (initial state), OR
-    // 2. Email hasn't been delivered yet (no deliveredAt), OR
-    // 3. This processed event is earlier than deliveredAt (out-of-order webhook)
+    // TIMESTAMP-BASED LOGIC (like frontend): Never downgrade status
+    // Rule: Only update status to 'processed' if current status is 'pending' or 'processed'
+    // This ensures status only moves forward, never backward (like frontend event ordering)
     const shouldUpdateStatus = 
       emailLog.status === 'pending' || 
-      !existingDeliveredAt || 
-      (existingDeliveredAt && eventTimestamp < existingDeliveredAt);
+      emailLog.status === 'processed';
     
     // Enhanced logging for status transitions
     this.logger.debug(
@@ -212,9 +165,7 @@ export class BounceManagementService {
     if (!shouldUpdateStatus) {
       this.logger.debug(
         `⏭️ Skipping status update for processed event (EmailLog ID: ${emailLog.id}, ` +
-        `Current status: ${emailLog.status}, ` +
-        `DeliveredAt exists: ${!!existingDeliveredAt}, ` +
-        `Event is after delivery: ${existingDeliveredAt ? eventTimestamp > existingDeliveredAt : false})`
+        `Current status: ${emailLog.status} - will not downgrade from delivered/bounced/etc)`
       );
     }
     
@@ -337,8 +288,8 @@ export class BounceManagementService {
 
   /**
    * Handle delivered event
-   * Uses timestamp-based logic (foolproof, doesn't rely on custom_args)
-   * Always updates to delivered - this is the final delivery status
+   * Uses timestamp-based logic (like frontend) - always updates to delivered
+   * This is the final delivery status and should never be downgraded
    */
   private async handleDelivered(event: SendGridWebhookEvent, emailLog: any): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
@@ -347,8 +298,9 @@ export class BounceManagementService {
     const existingDeliveredAt = emailLog.deliveredAt ? new Date(emailLog.deliveredAt) : null;
     const existingProcessedAt = emailLog.processedAt ? new Date(emailLog.processedAt) : null;
     
-    // FOOLPROOF LOGIC: Always update to 'delivered' - it's the final delivery status
-    // However, only update deliveredAt if this event is newer (handle duplicate webhooks)
+    // TIMESTAMP-BASED LOGIC (like frontend): Always update to 'delivered'
+    // This is the final delivery status - never downgrade from this
+    // Only update deliveredAt if this event is newer (handle duplicate webhooks)
     const shouldUpdateDeliveredAt = !existingDeliveredAt || eventTimestamp >= existingDeliveredAt;
     
     // Enhanced logging for status transitions
