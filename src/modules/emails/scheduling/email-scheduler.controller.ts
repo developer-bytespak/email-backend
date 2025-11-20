@@ -1,5 +1,6 @@
 import { Controller, Post, Body, Get, Delete, Param, ParseIntPipe, Query } from '@nestjs/common';
-import { IsNumber, IsDateString } from 'class-validator';
+import { IsNumber, IsDateString, IsArray, IsOptional, ValidateNested, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
 import { EmailSchedulerService } from './email-scheduler.service';
 
 export class ScheduleEmailDto {
@@ -8,6 +9,21 @@ export class ScheduleEmailDto {
 
   @IsDateString()
   scheduledAt: string; // ISO date string
+}
+
+export class ScheduleBatchDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsNumber({}, { each: true })
+  draftIds: number[];
+
+  @IsDateString()
+  startTime: string; // ISO date string - when to start sending
+
+  @IsOptional()
+  @IsArray()
+  @IsNumber({}, { each: true })
+  clientEmailIds?: number[]; // Optional: which mailboxes to use
 }
 
 @Controller('emails/schedule')
@@ -27,6 +43,28 @@ export class EmailSchedulerController {
       success: true,
       message: 'Email scheduled successfully',
       data: result,
+    };
+  }
+
+  /**
+   * Schedule multiple emails with mailbox selection and proportional distribution
+   * POST /emails/schedule/batch
+   */
+  @Post('batch')
+  async scheduleBatch(@Body() batchDto: ScheduleBatchDto) {
+    const startTime = new Date(batchDto.startTime);
+    const results = await this.schedulerService.scheduleBatch(
+      batchDto.draftIds,
+      startTime,
+      batchDto.clientEmailIds // Pass selected mailboxes (or undefined to use existing)
+    );
+    
+    return {
+      success: true,
+      message: `${batchDto.draftIds.length} emails scheduled successfully`,
+      count: results.length,
+      mailboxesUsed: batchDto.clientEmailIds?.length || 'existing',
+      data: results,
     };
   }
 
