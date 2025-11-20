@@ -61,13 +61,14 @@ export interface EmailAnalyticsEvent {
   subject?: string | null;
   url?: string | null;
   status?: EmailLogStatus | null;
+  fromEmail?: string | null;
 }
 
 @Injectable()
 export class EmailAnalyticsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getOverview(clientId: number, range: AnalyticsDateRange): Promise<EmailAnalyticsOverview> {
+  async getOverview(clientId: number, range: AnalyticsDateRange, fromEmail?: string): Promise<EmailAnalyticsOverview> {
     const { from, to } = range;
 
     const [
@@ -88,6 +89,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           sentAt: { gte: from, lte: to },
@@ -98,6 +100,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'delivered',
@@ -109,6 +112,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'spamreport',
@@ -121,6 +125,15 @@ export class EmailAnalyticsService {
           contact: {
             csvUpload: { clientId },
           },
+          ...(fromEmail && {
+            emailLog: {
+              emailDraft: {
+                clientEmail: {
+                  emailAddress: fromEmail,
+                },
+              },
+            },
+          }),
         },
       }),
       this.prisma.emailLog.count({
@@ -128,6 +141,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'processed',
@@ -139,6 +153,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'deferred',
@@ -150,6 +165,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'dropped',
@@ -161,6 +177,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'blocked',
@@ -175,6 +192,7 @@ export class EmailAnalyticsService {
             emailDraft: {
               clientEmail: {
                 clientId,
+                ...(fromEmail && { emailAddress: fromEmail }),
               },
             },
           },
@@ -188,6 +206,7 @@ export class EmailAnalyticsService {
             emailDraft: {
               clientEmail: {
                 clientId,
+                ...(fromEmail && { emailAddress: fromEmail }),
               },
             },
           },
@@ -199,6 +218,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           status: 'bounced',
@@ -259,7 +279,7 @@ export class EmailAnalyticsService {
     };
   }
 
-  async getTimeline(clientId: number, range: AnalyticsDateRange): Promise<EmailAnalyticsTimelinePoint[]> {
+  async getTimeline(clientId: number, range: AnalyticsDateRange, fromEmail?: string): Promise<EmailAnalyticsTimelinePoint[]> {
     const { from, to } = range;
 
     const dateBuckets = this.buildDateBuckets(from, to);
@@ -270,6 +290,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           sentAt: { gte: from, lte: to },
@@ -287,6 +308,7 @@ export class EmailAnalyticsService {
             emailDraft: {
               clientEmail: {
                 clientId,
+                ...(fromEmail && { emailAddress: fromEmail }),
               },
             },
           },
@@ -299,12 +321,17 @@ export class EmailAnalyticsService {
       this.prisma.emailUnsubscribe.findMany({
         where: {
           unsubscribedAt: { gte: from, lte: to },
-          emailLog: {
-            emailDraft: {
-              clientEmail: {
-                clientId,
+          ...(fromEmail && {
+            emailLog: {
+              emailDraft: {
+                clientEmail: {
+                  emailAddress: fromEmail,
+                },
               },
             },
+          }),
+          contact: {
+            csvUpload: { clientId },
           },
         },
         select: {
@@ -373,6 +400,7 @@ export class EmailAnalyticsService {
     clientId: number,
     range: AnalyticsDateRange,
     limit = 50,
+    fromEmail?: string,
   ): Promise<EmailAnalyticsEvent[]> {
     const { from, to } = range;
 
@@ -382,6 +410,7 @@ export class EmailAnalyticsService {
           emailDraft: {
             clientEmail: {
               clientId,
+              ...(fromEmail && { emailAddress: fromEmail }),
             },
           },
           OR: [
@@ -404,6 +433,11 @@ export class EmailAnalyticsService {
           emailDraft: {
             select: {
               subjectLines: true,
+              clientEmail: {
+                select: {
+                  emailAddress: true,
+                },
+              },
             },
           },
         },
@@ -415,6 +449,7 @@ export class EmailAnalyticsService {
             emailDraft: {
               clientEmail: {
                 clientId,
+                ...(fromEmail && { emailAddress: fromEmail }),
               },
             },
           },
@@ -436,6 +471,11 @@ export class EmailAnalyticsService {
               emailDraft: {
                 select: {
                   subjectLines: true,
+                  clientEmail: {
+                    select: {
+                      emailAddress: true,
+                    },
+                  },
                 },
               },
             },
@@ -450,6 +490,15 @@ export class EmailAnalyticsService {
               clientId,
             },
           },
+          ...(fromEmail && {
+            emailLog: {
+              emailDraft: {
+                clientEmail: {
+                  emailAddress: fromEmail,
+                },
+              },
+            },
+          }),
         },
         orderBy: {
           unsubscribedAt: 'desc',
@@ -467,6 +516,11 @@ export class EmailAnalyticsService {
               emailDraft: {
                 select: {
                   subjectLines: true,
+                  clientEmail: {
+                    select: {
+                      emailAddress: true,
+                    },
+                  },
                 },
               },
             },
@@ -481,6 +535,7 @@ export class EmailAnalyticsService {
       const contactName = log.contact?.businessName ?? null;
       const email = log.contact?.email ?? null;
       const subject = log.emailDraft?.subjectLines?.[0] ?? null;
+      const fromEmail = log.emailDraft?.clientEmail?.emailAddress ?? null;
 
       if (log.processedAt && this.isWithinRange(log.processedAt, from, to)) {
         events.push({
@@ -491,6 +546,7 @@ export class EmailAnalyticsService {
           contactName,
           subject,
           status: log.status,
+          fromEmail,
         });
       }
 
@@ -503,6 +559,7 @@ export class EmailAnalyticsService {
           contactName,
           subject,
           status: log.status,
+          fromEmail,
         });
       }
 
@@ -515,6 +572,7 @@ export class EmailAnalyticsService {
           contactName,
           subject,
           status: log.status,
+          fromEmail,
         });
       }
 
@@ -529,6 +587,7 @@ export class EmailAnalyticsService {
             contactName,
             subject,
             status: log.status,
+            fromEmail,
           });
         }
       }
@@ -544,6 +603,7 @@ export class EmailAnalyticsService {
         subject: engagement.emailLog.emailDraft?.subjectLines?.[0] ?? null,
         status: engagement.emailLog.status,
         url: engagement.engagementType === EngagementType.click ? engagement.url ?? null : null,
+        fromEmail: engagement.emailLog.emailDraft?.clientEmail?.emailAddress ?? null,
       });
     }
 
@@ -556,6 +616,7 @@ export class EmailAnalyticsService {
         contactName: unsubscribe.contact?.businessName ?? null,
         subject: unsubscribe.emailLog?.emailDraft?.subjectLines?.[0] ?? null,
         status: unsubscribe.emailLog?.status ?? null,
+        fromEmail: unsubscribe.emailLog?.emailDraft?.clientEmail?.emailAddress ?? null,
       });
     }
 
@@ -619,6 +680,40 @@ export class EmailAnalyticsService {
       default:
         return null;
     }
+  }
+
+  /**
+   * Get unique sender email addresses for a client
+   */
+  async getUniqueSenderEmails(clientId: number): Promise<string[]> {
+    const emailLogs = await this.prisma.emailLog.findMany({
+      where: {
+        emailDraft: {
+          clientEmail: {
+            clientId,
+          },
+        },
+      },
+      select: {
+        emailDraft: {
+          select: {
+            clientEmail: {
+              select: {
+                emailAddress: true,
+              },
+            },
+          },
+        },
+      },
+      distinct: ['emailDraftId'],
+    });
+
+    const senderEmails = emailLogs
+      .map(log => log.emailDraft?.clientEmail?.emailAddress)
+      .filter((email): email is string => email !== null && email !== undefined);
+
+    // Return unique emails
+    return [...new Set(senderEmails)];
   }
 }
 

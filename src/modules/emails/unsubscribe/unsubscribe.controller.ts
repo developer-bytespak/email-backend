@@ -1,13 +1,13 @@
 import { Controller, Get, Post, Param, Body, Res, UseGuards, Request, ParseIntPipe, UnauthorizedException } from '@nestjs/common';
 import type { Response } from 'express';
 import { UnsubscribeService } from './unsubscribe.service';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 export class UnsubscribeDto {
-  @IsNotEmpty({ message: 'Reason is required' })
+  @IsOptional()
   @IsString()
-  reason: string;
+  reason?: string;
 }
 
 @Controller('emails/unsubscribe')
@@ -313,19 +313,17 @@ export class UnsubscribeController {
 <body>
   <div class="container">
     <h2>Unsubscribe from Emails</h2>
-    <p style="text-align: center; color: #666; margin-bottom: 25px;">We're sorry to see you go. Please let us know why you're unsubscribing.</p>
+    <p style="text-align: center; color: #666; margin-bottom: 25px;">We're sorry to see you go. If you'd like, you can let us know why you're unsubscribing.</p>
     
-    <form method="POST" action="/emails/unsubscribe/${token}" id="unsubscribeForm" onsubmit="return validateForm(event)">
+    <form method="POST" action="/emails/unsubscribe/${token}" id="unsubscribeForm">
       <div class="form-group">
-        <label for="reason">Reason for Unsubscribing <span class="required">*</span></label>
+        <label for="reason">Reason for Unsubscribing (Optional)</label>
         <textarea 
           id="reason" 
           name="reason" 
-          placeholder="Please tell us why you're unsubscribing (e.g., too many emails, not relevant, etc.)" 
-          required
+          placeholder="Please tell us why you're unsubscribing (e.g., too many emails, not relevant, etc.) - Optional"
         ></textarea>
-        <div class="error" id="reasonError">Reason is required</div>
-        <div class="help-text">This helps us improve our email communications.</div>
+        <div class="help-text">This helps us improve our email communications. You can skip this if you prefer.</div>
       </div>
       
       <button type="submit" class="button">Confirm Unsubscribe</button>
@@ -342,32 +340,6 @@ export class UnsubscribeController {
       <a href="#" onclick="window.close();" class="link">Cancel</a>
     </p>
   </div>
-  
-  <script>
-    function validateForm(event) {
-      const reason = document.getElementById('reason').value.trim();
-      const errorDiv = document.getElementById('reasonError');
-      
-      if (!reason) {
-        event.preventDefault();
-        errorDiv.style.display = 'block';
-        document.getElementById('reason').style.borderColor = '#dc3545';
-        return false;
-      }
-      
-      errorDiv.style.display = 'none';
-      document.getElementById('reason').style.borderColor = '#ddd';
-      return true;
-    }
-    
-    // Clear error on input
-    document.getElementById('reason').addEventListener('input', function() {
-      if (this.value.trim()) {
-        document.getElementById('reasonError').style.display = 'none';
-        this.style.borderColor = '#ddd';
-      }
-    });
-  </script>
 </body>
 </html>`;
       
@@ -408,33 +380,9 @@ export class UnsubscribeController {
     @Res() res: Response,
   ) {
     try {
-      // Validate reason is provided
-      if (!body.reason || !body.reason.trim()) {
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Validation Error</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
-    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
-    .error { color: #dc3545; }
-    .button { background-color: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin-top: 20px; }
-    .button:hover { background-color: #0056b3; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h2 class="error">Validation Error</h2>
-    <p>Reason for unsubscribing is required. Please provide a reason.</p>
-    <a href="/emails/unsubscribe/${token}" class="button">Go Back</a>
-  </div>
-</body>
-</html>`;
-        return res.status(400).set('Content-Type', 'text/html').send(html);
-      }
-
-      const result = await this.unsubscribeService.processUnsubscribe(token, body.reason.trim());
+      // Process unsubscribe with optional reason
+      const reason = body.reason?.trim() || undefined;
+      const result = await this.unsubscribeService.processUnsubscribe(token, reason);
       
       // Return confirmation page with resubscribe option
       const html = `

@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional } from 'class-validator';
+import { IsDateString, IsOptional, IsEmail } from 'class-validator';
 
 export class DateRangeQueryDto {
   /**
@@ -16,6 +16,14 @@ export class DateRangeQueryDto {
   @IsOptional()
   @IsDateString()
   to?: string;
+
+  /**
+   * Filter by sender email address (from ClientEmail.emailAddress).
+   * Optional - if omitted, returns analytics for all sender emails.
+   */
+  @IsOptional()
+  @IsEmail()
+  fromEmail?: string;
 }
 
 

@@ -151,145 +151,120 @@ export class SmsGenerationService {
    * Uses research-driven, direct-response SMS copywriting approach
    */
   private async generateSmsContent(summary: any, contact: any): Promise<string> {
-    // Transform painPoints array into ranked structure for the prompt
-    const rankedPainPoints = (summary.painPoints || []).slice(0, 3).map((painPoint: string, index: number) => ({
-      rank: index + 1,
-      category: this.inferCategory(painPoint),
-      painPoint: painPoint,
-      evidence: this.extractEvidence(summary.summaryText, painPoint),
-    }));
-
-    // Transform keywords array into structured format
-    const keywords = {
-      industryTerms: summary.keywords || [],
-    };
+    // Format pain points for the prompt
+    const painPointsFormatted = (summary.painPoints || []).map((painPoint: string) => {
+      return `- ${painPoint}`;
+    }).join('\n');
 
     const smsPrompt = `
-You are a direct-response SMS copywriter. Write like a knowledgeable peer who researched their business—not a bot or salesperson.
+You are a skilled SMS copywriter specializing in personalized business outreach.
 
-Core Principle:
-Lead with research, not introduction. In 160-200 characters, prove you know their business before they ask who you are.
+Your goal is to craft a short, conversational, and value-driven text message (SMS) that builds curiosity and invites a quick response.
 
-Required Inputs:
-{
-  "companyName": "${contact.businessName}",
-  "rankedPainPoints": ${JSON.stringify(rankedPainPoints)},
-  "strengths": ${JSON.stringify(summary.strengths || [])},
-  "keywords": ${JSON.stringify(keywords)},
-  "website": "${contact.website || 'N/A'}",
-  "businessSummary": "${summary.summaryText}"
-}
+The tone should be friendly, confident, and professional, similar to how a founder or consultant would text a potential client — clear, human, and respectful of their time.
 
-About Us (Reference Only): Bytes Platform - Software development partner for web/mobile apps, AI integrations, e-commerce, and UI/UX.
+Inputs:
 
-SMS Structure (160-200 characters):
-- Research Hook (60-100 chars): Specific observation about their site/business
-- Diagnostic Question (50-80 chars): Shows expertise, invites reply
-- Signature (20-40 chars): Role/credential, not company name
+1. Company Summary:
+${summary.summaryText}
 
-Critical Rules:
+2. Pain Points Identified:
+${painPointsFormatted || 'No specific pain points identified'}
 
-Opening Strategy:
-RIGHT: "Noticed ${contact.businessName}'s checkout has 6 steps. Tested streamlined flow? -Alex, ecommerce dev"
-WRONG: "Hi, I'm Alex from Bytes. I noticed your site..."
+3. Our Services (Bytes Platform):
 
-Must Include:
-- Company name + specific feature in first sentence
-- 1 industry term used naturally (from keywords.industryTerms)
-- Diagnostic question (not meeting request)
-- Signature with role only ("Alex, UX consultant" or "Alex, dev consultant")
+Bytes Platform is a US-based LLC offering:
+- Web & mobile app development
+- AI SaaS products
+- Shopify & e-commerce solutions
+- WordPress & plugin development
+- UI/UX design
 
-Never Include:
-- Personal name assumption ("Hi John")
-- Company introduction ("I'm from Bytes...")
-- Service pitch ("We specialize in...")
-- Links, emojis, excessive punctuation
-- Meeting requests ("Can we schedule...")
+We help businesses turn ideas into working products efficiently using modern technologies.
 
-Output Format:
-Generate 1 SMS variant (160-200 chars) that follows this structure:
+Instructions for the Model:
 
-Variant Strategy (choose the best fit):
-1. Technical: Specific tech observation + question + signature
-2. Industry Pattern: Industry insight + company-specific question + signature
-3. Opportunity: Acknowledge strength + transition to gap + signature
+Analyze the Inputs:
+- Understand the company's focus and key pain points.
+- Identify which Bytes Platform service best addresses their challenges.
 
-The SMS Must Include:
-- Character count (must be 160-200)
-- Company name reference
-- Observable evidence from their business
-- Question requiring <5 word answer
-- Signature showing relevance without company pitch
+Write 2 Personalized SMS Variants (each ≤ 320 characters):
+- Begin with a natural, personalized opener referencing their company or focus.
+- Acknowledge a pain point or opportunity briefly.
+- Suggest how Bytes Platform can help — one clear benefit only.
+- End with a simple, conversational CTA (e.g., "Worth a quick call?" or "Want me to share a quick example?").
 
-Quality Checklist:
-- First 10 words prove research (preview text)
-- No "Hi [Name]" or personal assumptions
-- 160-200 characters (1 SMS unit)
-- Question is diagnostic, not sales-y
-- Signature shows relevance without company pitch
-- Industry term used naturally
-- Would pass "how did they know this?" test
+Tone Guidelines:
+- Professional but relaxed (no slang, no hard sell).
+- Natural, like a text between peers.
+- Avoid spammy or promotional words ("Free," "Limited time," "Offer").
+- Keep punctuation light — use commas and periods, not excessive exclamation marks.
 
-Examples:
+Output Format (Mandatory):
 
-BAD:
-"Hi! I'm Alex from Bytes Platform. We build websites and apps. Would love to discuss helping your company. Free for a call?"
-[Template, no research, sales pitch]
+SMS Variant 1:
+[First SMS option, ≤ 320 characters]
 
-GOOD Examples:
+SMS Variant 2:
+[Second SMS option, ≤ 320 characters]
 
-Example 1 (Technical):
-"Noticed ${contact.businessName}'s product pages load images sequentially on mobile. Tested lazy loading? Curious about bounce rate. -Alex, frontend dev"
-[Specific observation, technical term, diagnostic question]
-
-Example 2 (Pattern):
-"Most SaaS dashboards struggle with data viz at scale. Does ${contact.businessName}'s charting handle 10k+ data points smoothly? -Alex, worked on similar"
-[Industry knowledge, specific question, experience hint]
-
-Example 3 (Opportunity):
-"${contact.businessName}'s onboarding UX is clean. Checkout needs 6 steps though—tested streamlined flow? Worth discussing. -Alex, ecommerce consultant"
-[Strength + evidence + opportunity + credential]
-
-Signature Options:
-- For technical issues: "-Alex, frontend dev" | "-Alex, mobile specialist"
-- For UX/conversion: "-Alex, UX consultant" | "-Alex, ecommerce specialist"
-- For general: "-Alex, dev consultant" | "-Alex, build these"
-
-Keep it vague enough to create curiosity, specific enough to be credible.
-
-Industry-Specific Hooks:
-- E-commerce: "Noticed ${contact.businessName}'s cart abandonment modal fires after 5 seconds..."
-- SaaS: "${contact.businessName}'s dashboard makes 12 API calls on load..."
-- Service Business: "${contact.businessName}'s contact form has 8 required fields..."
-- Content/Media: "${contact.businessName}'s articles have 4.5 second load time on 4G..."
+Rationale:
+[Explain briefly which pain point was targeted and which Bytes Platform service fits]
 
 OUTPUT:
-Return ONLY the SMS text (160-200 characters). No labels, no explanations, no JSON. Just the SMS message text.
+Return the response in the exact format above with "SMS Variant 1:", "SMS Variant 2:", and "Rationale:" labels.
 `;
 
     try {
       // Use the existing Gemini integration
       const response = await this.callGeminiForSms(smsPrompt);
 
-      // Clean the response (remove any extra formatting)
-      const smsMessage = response.trim().replace(/^["']|["']$/g, '');
+      // Parse the response to extract SMS variants
+      // Expected format:
+      // SMS Variant 1: [text]
+      // SMS Variant 2: [text]
+      // Rationale: [text]
+      
+      let smsMessage = '';
+      const variant1Match = response.match(/SMS Variant 1:\s*(.+?)(?=\nSMS Variant 2:|$)/is);
+      const variant2Match = response.match(/SMS Variant 2:\s*(.+?)(?=\nRationale:|$)/is);
+      const rationaleMatch = response.match(/Rationale:\s*(.+?)$/is);
 
-      // Validate character limit (160-200 characters for research-driven SMS)
-      if (smsMessage.length < 160) {
-        this.logger.warn(`SMS message is too short (${smsMessage.length} chars). Expected 160-200 characters.`);
+      // Extract the first variant (preferred) or second variant as fallback
+      if (variant1Match && variant1Match[1]) {
+        smsMessage = variant1Match[1].trim();
+      } else if (variant2Match && variant2Match[1]) {
+        smsMessage = variant2Match[1].trim();
+      } else {
+        // Fallback: try to extract any text that looks like an SMS
+        const lines = response.split('\n').filter(line => line.trim().length > 0);
+        smsMessage = lines.find(line => line.length <= 320 && line.length > 20) || response.trim();
       }
-      if (smsMessage.length > 200) {
-        this.logger.warn(`SMS message exceeds 200 characters (${smsMessage.length}), truncating...`);
-        return smsMessage.substring(0, 197) + '...';
+
+      // Clean the response (remove any extra formatting, quotes, etc.)
+      smsMessage = smsMessage.replace(/^["']|["']$/g, '').trim();
+
+      // Log rationale if available
+      if (rationaleMatch && rationaleMatch[1]) {
+        this.logger.log(`SMS Rationale: ${rationaleMatch[1].trim()}`);
+      }
+
+      // Validate character limit (≤ 320 characters as per new prompt)
+      if (smsMessage.length > 320) {
+        this.logger.warn(`SMS message exceeds 320 characters (${smsMessage.length}), truncating...`);
+        return smsMessage.substring(0, 317) + '...';
+      }
+
+      if (smsMessage.length < 20) {
+        this.logger.warn(`SMS message is too short (${smsMessage.length} chars).`);
+        throw new Error('Generated SMS too short');
       }
 
       return smsMessage;
 
     } catch (error) {
       this.logger.error('Failed to generate SMS content with Gemini:', error);
-
-      // Fallback SMS if Gemini fails (still follows research-driven format)
-      return `Noticed ${contact.businessName}'s site. Quick question about your current setup? -Alex, dev consultant`;
+      throw error; // Re-throw the error instead of returning fallback
     }
   }
 
