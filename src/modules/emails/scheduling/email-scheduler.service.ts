@@ -81,6 +81,217 @@ export class EmailSchedulerService implements OnModuleInit {
   }
 
   /**
+   * Schedule multiple emails with user-selected mailbox distribution
+   * Uses categorical time windows with randomization to avoid spam detection
+   * 
+   * Time windows (per mailbox):
+   * - Small batches (1-10 emails): 1 hour
+   * - Medium batches (11-50 emails): 6 hours  
+   * - Large batches (51+ emails): 24 hours
+   * 
+   * All mailboxes run in parallel, total completion = max time window
+   */
+  async scheduleBatch(
+    draftIds: number[], 
+    startTime: Date, 
+    clientEmailIds?: number[]
+  ): Promise<any[]> {
+    if (draftIds.length === 0) {
+      return [];
+    }
+
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    // Fetch drafts with their current mailbox assignments
+    const drafts = await scrapingClient.emailDraft.findMany({
+      where: { id: { in: draftIds } },
+      select: {
+        id: true,
+        clientEmailId: true,
+      },
+    });
+
+    if (drafts.length === 0) {
+      throw new Error('No valid email drafts found');
+    }
+
+    // If mailboxes are specified, validate and reassign drafts
+    let targetMailboxIds: number[];
+    
+    if (clientEmailIds && clientEmailIds.length > 0) {
+      // Validate that all specified mailboxes exist
+      const mailboxes = await scrapingClient.clientEmail.findMany({
+        where: { id: { in: clientEmailIds } },
+        select: { id: true, emailAddress: true, status: true },
+      });
+
+      const validMailboxIds = mailboxes
+        .filter(m => m.status === 'active')
+        .map(m => m.id);
+
+      if (validMailboxIds.length === 0) {
+        throw new Error('No active mailboxes found in selected list');
+      }
+
+      // Validate: number of emails must be >= number of mailboxes
+      if (drafts.length < validMailboxIds.length) {
+        throw new Error(
+          `Cannot schedule ${drafts.length} email(s) across ${validMailboxIds.length} mailbox(es). ` +
+          `Number of emails must be greater than or equal to the number of selected mailboxes.`
+        );
+      }
+
+      targetMailboxIds = validMailboxIds;
+
+      // Reassign drafts to selected mailboxes (distribute evenly)
+      const emailsPerMailbox = Math.ceil(drafts.length / targetMailboxIds.length);
+      
+      for (let i = 0; i < drafts.length; i++) {
+        const mailboxIndex = Math.floor(i / emailsPerMailbox) % targetMailboxIds.length;
+        const newMailboxId = targetMailboxIds[mailboxIndex];
+        
+        await scrapingClient.emailDraft.update({
+          where: { id: drafts[i].id },
+          data: { clientEmailId: newMailboxId },
+        });
+        
+        drafts[i].clientEmailId = newMailboxId;
+      }
+
+      this.logger.log(
+        `📧 Reassigned ${drafts.length} drafts to ${targetMailboxIds.length} mailbox(es) ` +
+        `(~${emailsPerMailbox} emails per mailbox)`
+      );
+    } else {
+      // Use existing mailbox assignments from drafts
+      const uniqueMailboxIds = [...new Set(drafts.map(d => d.clientEmailId))];
+      targetMailboxIds = uniqueMailboxIds;
+      this.logger.log(
+        `📧 Using existing mailbox assignments (${targetMailboxIds.length} mailbox(es))`
+      );
+    }
+
+    // Group drafts by mailbox
+    const mailboxGroups = new Map<number, number[]>();
+    for (const draft of drafts) {
+      if (!mailboxGroups.has(draft.clientEmailId)) {
+        mailboxGroups.set(draft.clientEmailId, []);
+      }
+      mailboxGroups.get(draft.clientEmailId)!.push(draft.id);
+    }
+
+    const totalEmails = drafts.length;
+    const mailboxCount = targetMailboxIds.length;
+    
+    // Calculate estimated time window for logging (based on emails per mailbox)
+    const maxEmailsPerMailbox = Math.max(...Array.from(mailboxGroups.values()).map(arr => arr.length));
+    const estimatedTimeWindow = this.calculateTimeWindow(maxEmailsPerMailbox); // For logging only
+    const estimatedEndTime = new Date(startTime.getTime() + estimatedTimeWindow);
+
+    this.logger.log(
+      `📧 Scheduling ${totalEmails} emails across ${mailboxCount} mailbox(es): ` +
+      `${maxEmailsPerMailbox} emails per mailbox max, estimated ${Math.round(estimatedTimeWindow / (1000 * 60))} minutes per mailbox ` +
+      `(all mailboxes run in parallel with 5-10 min sequential gaps)`
+    );
+
+    // Distribute emails sequentially with 5-10 minute gaps
+    // All mailboxes start at the same time and run in parallel
+    const schedule: Array<{ draftId: number; scheduledAt: Date }> = [];
+    
+    for (const [mailboxId, draftIdsForMailbox] of mailboxGroups.entries()) {
+      const emailsInThisMailbox = draftIdsForMailbox.length;
+      
+      // Shuffle draft IDs for this mailbox to add randomness to which email goes when
+      const shuffledDrafts = this.shuffleArray([...draftIdsForMailbox]);
+      
+      // Calculate sequential distribution: first at startTime, rest with 5-10 min gaps
+      const timeSlots = this.distributeWithRandomization(
+        emailsInThisMailbox,
+        estimatedTimeWindow, // Only used for logging/compatibility
+        startTime
+      );
+      
+      // Assign each draft to a time slot
+      shuffledDrafts.forEach((draftId, index) => {
+        schedule.push({
+          draftId,
+          scheduledAt: timeSlots[index],
+        });
+      });
+    }
+
+    // Sort by scheduled time to maintain proper order
+    schedule.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
+
+    // Schedule all emails
+    const results: any[] = [];
+    for (const item of schedule) {
+      const result = await this.scheduleEmail(item.draftId, item.scheduledAt);
+      results.push(result);
+    }
+
+    this.logger.log(
+      `✅ Scheduled ${results.length} emails: ` +
+      `start ${startTime.toISOString()}, estimated completion by ${estimatedEndTime.toISOString()}`
+    );
+
+    return results;
+  }
+
+  /**
+   * Distribute emails sequentially with 5-10 minute randomized gaps
+   * First email at startTime, each subsequent email 5-10 minutes after previous
+   * 
+   * This creates natural human-like behavior:
+   * - Email 1: 3:22 AM (scheduled time)
+   * - Email 2: 3:27-3:32 AM (5-10 min after email 1)
+   * - Email 3: 3:32-3:42 AM (5-10 min after email 2)
+   * - etc.
+   * 
+   * Works for any batch size and scales naturally
+   */
+  private distributeWithRandomization(
+    emailCount: number,
+    timeWindow: number, // Kept for backward compatibility but not used in calculation
+    startTime: Date
+  ): Date[] {
+    if (emailCount === 0) {
+      return [];
+    }
+
+    const minDelay = 5 * 60 * 1000; // 5 minutes
+    const maxDelay = 10 * 60 * 1000; // 10 minutes
+    const schedule: Date[] = [];
+  
+    let currentTime = new Date(startTime);
+  
+    for (let i = 0; i < emailCount; i++) {
+      // Schedule current email
+      schedule.push(new Date(currentTime));
+      
+      // Add randomized 5-10 minute delay for next email (except for the last one)
+      if (i < emailCount - 1) {
+        const delay = minDelay + Math.random() * (maxDelay - minDelay);
+        currentTime = new Date(currentTime.getTime() + delay);
+      }
+    }
+  
+    return schedule;
+  }
+
+  /**
+   * Shuffle array using Fisher-Yates algorithm
+   */
+  private shuffleArray<T>(array: T[]): T[] {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  /**
    * Calculate priority based on scheduled time (FIFO)
    * Uses relative seconds from base date to fit in INT4 (max ~68 years from base)
    */
@@ -94,6 +305,7 @@ export class EmailSchedulerService implements OnModuleInit {
 
   /**
    * Process email queue (runs in background)
+   * Delays are pre-calculated in scheduleBatch, so minimal buffer needed
    */
   async processQueue(): Promise<void> {
     try {
@@ -131,13 +343,16 @@ export class EmailSchedulerService implements OnModuleInit {
 
       this.logger.log(`📧 Processing ${queueItems.length} queued emails...`);
 
-      // Process each email
+      // Process each email - delays are already baked into scheduledAt times
       for (const queueItem of queueItems) {
         await this.processQueueItem(queueItem);
         
-        // Add random delay between sends (5-10 minutes)
-        const delay = this.calculateDelay();
-        await this.sleep(delay);
+        // Only add minimal buffer (30-60 seconds) if processing multiple emails quickly
+        // The actual spacing is handled by scheduleBatch's proportional distribution
+        if (queueItems.length > 1) {
+          const bufferDelay = Math.floor(Math.random() * 30000) + 30000; // 30-60 seconds
+          await this.sleep(bufferDelay);
+        }
       }
     } catch (error) {
       this.logger.error('Error processing queue:', error);
@@ -284,12 +499,18 @@ export class EmailSchedulerService implements OnModuleInit {
   }
 
   /**
-   * Calculate random delay (5-10 minutes)
+   * Calculate estimated time window for logging purposes only
+   * With sequential 5-10 min gaps, total time = (emailCount - 1) * maxDelay (10 minutes)
+   * 
+   * This is just an estimate - actual times are calculated sequentially in distributeWithRandomization
    */
-  private calculateDelay(): number {
-    const minDelay = 5 * 60 * 1000; // 5 minutes
-    const maxDelay = 10 * 60 * 1000; // 10 minutes
-    return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
+  private calculateTimeWindow(emailsPerMailbox: number): number {
+    if (emailsPerMailbox <= 1) {
+      return 0; // Single email has no time window
+    }
+    // Estimate: (emails - 1) * max delay (10 minutes)
+    // This gives maximum possible time, actual will be slightly less due to randomization
+    return (emailsPerMailbox - 1) * 10 * 60 * 1000;
   }
 
   /**
