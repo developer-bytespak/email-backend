@@ -19,7 +19,7 @@ export class EmailAnalyticsController {
     @Query() query: DateRangeQueryDto,
   ): Promise<{ success: true; data: EmailAnalyticsOverview }> {
     const range = this.normalizeRange(query);
-    const data = await this.analyticsService.getOverview(req.user.id, range);
+    const data = await this.analyticsService.getOverview(req.user.id, range, query.fromEmail);
 
     return {
       success: true,
@@ -33,7 +33,7 @@ export class EmailAnalyticsController {
     @Query() query: DateRangeQueryDto,
   ): Promise<{ success: true; data: EmailAnalyticsTimelinePoint[] }> {
     const range = this.normalizeRange(query);
-    const data = await this.analyticsService.getTimeline(req.user.id, range);
+    const data = await this.analyticsService.getTimeline(req.user.id, range, query.fromEmail);
 
     return {
       success: true,
@@ -47,11 +47,22 @@ export class EmailAnalyticsController {
     @Query() query: DateRangeQueryDto,
   ): Promise<{ success: true; data: EmailAnalyticsEvent[] }> {
     const range = this.normalizeRange(query);
-    const data = await this.analyticsService.getRecentEvents(req.user.id, range, 50);
+    const data = await this.analyticsService.getRecentEvents(req.user.id, range, 50, query.fromEmail);
 
     return {
       success: true,
       data,
+    };
+  }
+
+  @Get('senders')
+  async getSenders(
+    @Request() req: { user: { id: number } },
+  ): Promise<{ success: true; data: string[] }> {
+    const senders = await this.analyticsService.getUniqueSenderEmails(req.user.id);
+    return {
+      success: true,
+      data: senders,
     };
   }
 
