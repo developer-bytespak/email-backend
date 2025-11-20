@@ -1,13 +1,13 @@
 import { Controller, Get, Post, Param, Body, Res, UseGuards, Request, ParseIntPipe, UnauthorizedException } from '@nestjs/common';
 import type { Response } from 'express';
 import { UnsubscribeService } from './unsubscribe.service';
-import { IsOptional, IsString } from 'class-validator';
+import { IsString, IsNotEmpty } from 'class-validator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 
 export class UnsubscribeDto {
-  @IsOptional()
+  @IsNotEmpty({ message: 'Reason is required' })
   @IsString()
-  reason?: string;
+  reason: string;
 }
 
 @Controller('emails/unsubscribe')
@@ -67,20 +67,23 @@ export class UnsubscribeController {
 <head>
   <title>Subscription History</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-    .container { text-align: center; }
-    .info { background-color: #e7f3ff; padding: 15px; border-radius: 4px; margin: 20px 0; text-align: left; }
-    .success { background-color: #d4edda; padding: 15px; border-radius: 4px; margin: 20px 0; }
-    .button { background-color: #28a745; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 5px; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+    h2 { color: #333; margin-bottom: 20px; }
+    .info { background-color: #e7f3ff; padding: 20px; border-radius: 4px; margin: 20px 0; text-align: left; }
+    .success { background-color: #d4edda; padding: 20px; border-radius: 4px; margin: 20px 0; }
+    .button { background-color: #28a745; color: white; padding: 12px 24px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 5px; font-size: 16px; font-weight: bold; }
     .button:hover { background-color: #218838; }
     .button-danger { background-color: #dc3545; }
     .button-danger:hover { background-color: #c82333; }
     .button-secondary { background-color: #6c757d; }
     .button-secondary:hover { background-color: #5a6268; }
-    .link { color: #007bff; text-decoration: underline; }
+    .link { color: #007bff; text-decoration: underline; cursor: pointer; }
     .status-badge { display: inline-block; padding: 5px 10px; border-radius: 4px; font-weight: bold; }
     .status-unsubscribed { background-color: #ffc107; color: #000; }
     .status-subscribed { background-color: #28a745; color: white; }
+    .reason-box { background-color: #f8f9fa; padding: 12px; border-radius: 4px; margin-top: 10px; border-left: 3px solid #007bff; }
+    .reason-box p { margin: 5px 0; }
   </style>
 </head>
 <body>
@@ -92,8 +95,13 @@ export class UnsubscribeController {
       <p><strong>Status:</strong> <span class="status-badge status-unsubscribed">Unsubscribed</span></p>
       <p><strong>Email:</strong> ${history.contactEmail}</p>
       ${history.unsubscribeRecord ? `
-        <p><strong>Unsubscribed on:</strong> ${new Date(history.unsubscribeRecord.unsubscribedAt).toLocaleString()}</p>
-        ${history.unsubscribeRecord.reason ? `<p><strong>Reason:</strong> ${history.unsubscribeRecord.reason}</p>` : ''}
+        <p style="margin-top: 10px;"><strong>Unsubscribed on:</strong> ${new Date(history.unsubscribeRecord.unsubscribedAt).toLocaleString()}</p>
+        ${history.unsubscribeRecord.reason ? `
+        <div class="reason-box">
+          <strong>Reason:</strong>
+          <p>${history.unsubscribeRecord.reason}</p>
+        </div>
+        ` : ''}
       ` : ''}
     </div>
     <form method="POST" action="/emails/unsubscribe/resubscribe/${token}" style="display: inline;">
@@ -229,14 +237,19 @@ export class UnsubscribeController {
 <head>
   <title>Unsubscribe Status</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-    .container { text-align: center; }
-    .info { background-color: #e7f3ff; padding: 15px; border-radius: 4px; margin: 20px 0; }
-    .button { background-color: #28a745; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 5px; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+    h2 { color: #333; margin-bottom: 20px; }
+    .info { background-color: #e7f3ff; padding: 20px; border-radius: 4px; margin: 20px 0; text-align: left; }
+    .info p { margin: 8px 0; }
+    .info strong { color: #333; }
+    .reason-box { background-color: #f8f9fa; padding: 12px; border-radius: 4px; margin-top: 10px; border-left: 3px solid #007bff; }
+    .button { background-color: #28a745; color: white; padding: 12px 24px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 5px; font-size: 16px; font-weight: bold; }
     .button:hover { background-color: #218838; }
     .button-secondary { background-color: #6c757d; }
     .button-secondary:hover { background-color: #5a6268; }
-    .link { color: #007bff; text-decoration: underline; }
+    .link { color: #007bff; text-decoration: underline; cursor: pointer; }
+    .button-group { margin-top: 25px; }
   </style>
 </head>
 <body>
@@ -244,15 +257,22 @@ export class UnsubscribeController {
     <h2>Email Subscription Status</h2>
     <div class="info">
       <p><strong>You are currently unsubscribed from our emails.</strong></p>
-      <p style="font-size: 12px; color: #666;">
-        Unsubscribed on: ${new Date(history.unsubscribeRecord.unsubscribedAt).toLocaleDateString()}
-        ${history.unsubscribeRecord.reason ? `<br>Reason: ${history.unsubscribeRecord.reason}` : ''}
+      <p style="font-size: 14px; color: #666; margin-top: 10px;">
+        <strong>Unsubscribed on:</strong> ${new Date(history.unsubscribeRecord.unsubscribedAt).toLocaleString()}
       </p>
+      ${history.unsubscribeRecord.reason ? `
+      <div class="reason-box">
+        <strong style="color: #555;">Reason:</strong>
+        <p style="margin: 5px 0 0 0; color: #666;">${history.unsubscribeRecord.reason}</p>
+      </div>
+      ` : ''}
     </div>
-    <form method="POST" action="/emails/unsubscribe/resubscribe/${token}" style="display: inline;">
-      <button type="submit" class="button">Resubscribe to Emails</button>
-    </form>
-    <a href="/emails/unsubscribe/history/${token}" class="button button-secondary">View Subscription History</a>
+    <div class="button-group">
+      <form method="POST" action="/emails/unsubscribe/resubscribe/${token}" style="display: inline;">
+        <button type="submit" class="button">Resubscribe to Emails</button>
+      </form>
+      <a href="/emails/unsubscribe/history/${token}" class="button button-secondary">View Subscription History</a>
+    </div>
     <p style="margin-top: 20px; font-size: 12px; color: #999;">
       <a href="#" onclick="window.close();" class="link">Close</a>
     </p>
@@ -264,31 +284,90 @@ export class UnsubscribeController {
         return res.send(html);
       }
 
-      // Not unsubscribed - show unsubscribe form
+      // Not unsubscribed - show unsubscribe form with reason field
       const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <title>Unsubscribe</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; }
-    .container { text-align: center; }
-    .button { background-color: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; }
-    .button:hover { background-color: #0056b3; }
-    .link { color: #007bff; text-decoration: underline; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    h2 { color: #333; margin-bottom: 20px; text-align: center; }
+    .form-group { margin-bottom: 20px; text-align: left; }
+    label { display: block; margin-bottom: 8px; color: #555; font-weight: bold; }
+    label .required { color: #dc3545; }
+    textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-family: Arial, sans-serif; font-size: 14px; resize: vertical; min-height: 100px; box-sizing: border-box; }
+    textarea:focus { outline: none; border-color: #007bff; }
+    .error { color: #dc3545; font-size: 12px; margin-top: 5px; display: none; }
+    .button { background-color: #dc3545; color: white; padding: 12px 24px; border: none; cursor: pointer; border-radius: 4px; font-size: 16px; font-weight: bold; width: 100%; margin-top: 10px; }
+    .button:hover { background-color: #c82333; }
+    .button-secondary { background-color: #6c757d; margin-top: 10px; }
+    .button-secondary:hover { background-color: #5a6268; }
+    .link { color: #007bff; text-decoration: underline; cursor: pointer; }
+    .help-text { font-size: 12px; color: #666; margin-top: 5px; }
+    .resubscribe-section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
+    .resubscribe-section p { color: #666; font-size: 14px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h2>Unsubscribe from Emails</h2>
-    <p>Are you sure you want to unsubscribe from our emails?</p>
-    <form method="POST" action="/emails/unsubscribe/${token}">
-      <button type="submit" class="button">Yes, Unsubscribe</button>
+    <p style="text-align: center; color: #666; margin-bottom: 25px;">We're sorry to see you go. Please let us know why you're unsubscribing.</p>
+    
+    <form method="POST" action="/emails/unsubscribe/${token}" id="unsubscribeForm" onsubmit="return validateForm(event)">
+      <div class="form-group">
+        <label for="reason">Reason for Unsubscribing <span class="required">*</span></label>
+        <textarea 
+          id="reason" 
+          name="reason" 
+          placeholder="Please tell us why you're unsubscribing (e.g., too many emails, not relevant, etc.)" 
+          required
+        ></textarea>
+        <div class="error" id="reasonError">Reason is required</div>
+        <div class="help-text">This helps us improve our email communications.</div>
+      </div>
+      
+      <button type="submit" class="button">Confirm Unsubscribe</button>
     </form>
-    <p style="margin-top: 20px; font-size: 12px; color: #999;">
+    
+    <div class="resubscribe-section">
+      <p style="text-align: center; margin-bottom: 10px;">Changed your mind?</p>
+      <form method="POST" action="/emails/unsubscribe/resubscribe/${token}" style="display: inline; width: 100%;">
+        <button type="submit" class="button button-secondary">Resubscribe to Emails</button>
+      </form>
+    </div>
+    
+    <p style="margin-top: 20px; font-size: 12px; color: #999; text-align: center;">
       <a href="#" onclick="window.close();" class="link">Cancel</a>
     </p>
   </div>
+  
+  <script>
+    function validateForm(event) {
+      const reason = document.getElementById('reason').value.trim();
+      const errorDiv = document.getElementById('reasonError');
+      
+      if (!reason) {
+        event.preventDefault();
+        errorDiv.style.display = 'block';
+        document.getElementById('reason').style.borderColor = '#dc3545';
+        return false;
+      }
+      
+      errorDiv.style.display = 'none';
+      document.getElementById('reason').style.borderColor = '#ddd';
+      return true;
+    }
+    
+    // Clear error on input
+    document.getElementById('reason').addEventListener('input', function() {
+      if (this.value.trim()) {
+        document.getElementById('reasonError').style.display = 'none';
+        this.style.borderColor = '#ddd';
+      }
+    });
+  </script>
 </body>
 </html>`;
       
@@ -329,28 +408,68 @@ export class UnsubscribeController {
     @Res() res: Response,
   ) {
     try {
-      const result = await this.unsubscribeService.processUnsubscribe(token, body.reason);
+      // Validate reason is provided
+      if (!body.reason || !body.reason.trim()) {
+        const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Validation Error</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+    .error { color: #dc3545; }
+    .button { background-color: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin-top: 20px; }
+    .button:hover { background-color: #0056b3; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 class="error">Validation Error</h2>
+    <p>Reason for unsubscribing is required. Please provide a reason.</p>
+    <a href="/emails/unsubscribe/${token}" class="button">Go Back</a>
+  </div>
+</body>
+</html>`;
+        return res.status(400).set('Content-Type', 'text/html').send(html);
+      }
+
+      const result = await this.unsubscribeService.processUnsubscribe(token, body.reason.trim());
       
-      // Return confirmation page
+      // Return confirmation page with resubscribe option
       const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <title>Unsubscribed</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
-    .success { color: #28a745; }
-    .button { background-color: #6c757d; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 10px 5px; }
-    .button:hover { background-color: #5a6268; }
-    .link { color: #007bff; text-decoration: underline; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
+    .success { color: #28a745; font-size: 24px; margin-bottom: 15px; }
+    .message { color: #666; margin-bottom: 25px; }
+    .button { background-color: #28a745; color: white; padding: 12px 24px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin: 5px; font-size: 16px; }
+    .button:hover { background-color: #218838; }
+    .button-secondary { background-color: #6c757d; }
+    .button-secondary:hover { background-color: #5a6268; }
+    .link { color: #007bff; text-decoration: underline; cursor: pointer; }
+    .resubscribe-section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
   </style>
 </head>
 <body>
-  <div>
+  <div class="container">
     <h2 class="success">✓ Successfully Unsubscribed</h2>
-    <p>${result.message}</p>
+    <p class="message">${result.message}</p>
+    <p class="message" style="font-size: 14px;">Thank you for your feedback. We appreciate you taking the time to let us know why you're unsubscribing.</p>
+    
+    <div class="resubscribe-section">
+      <p style="color: #666; margin-bottom: 15px;">Changed your mind?</p>
+      <form method="POST" action="/emails/unsubscribe/resubscribe/${token}" style="display: inline;">
+        <button type="submit" class="button">Resubscribe to Emails</button>
+      </form>
+    </div>
+    
     <p style="margin-top: 20px;">
-      <a href="/emails/unsubscribe/history/${token}" class="button">View Subscription History</a>
+      <a href="/emails/unsubscribe/history/${token}" class="button button-secondary">View Subscription History</a>
     </p>
     <p style="font-size: 12px; color: #999; margin-top: 20px;">
       <a href="#" onclick="window.close();" class="link">Close this window</a>
@@ -368,14 +487,18 @@ export class UnsubscribeController {
 <head>
   <title>Error</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background-color: #f5f5f5; }
+    .container { background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center; }
     .error { color: #dc3545; }
+    .button { background-color: #007bff; color: white; padding: 10px 20px; border: none; cursor: pointer; border-radius: 4px; text-decoration: none; display: inline-block; margin-top: 20px; }
+    .button:hover { background-color: #0056b3; }
   </style>
 </head>
 <body>
-  <div>
+  <div class="container">
     <h2 class="error">Unsubscribe Failed</h2>
     <p>${error.message || 'An error occurred while processing your unsubscribe request.'}</p>
+    <a href="/emails/unsubscribe/${token}" class="button">Try Again</a>
   </div>
 </body>
 </html>`;
