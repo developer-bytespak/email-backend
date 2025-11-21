@@ -38,12 +38,12 @@ export class ScrapingHistoryService {
       dateTo,
       businessName,
       page = 1,
-      limit = 50,
+      limit = 25,
       sortBy = 'scrapedAt',
       sortOrder = 'desc',
     } = query;
 
-    // Build where clause
+    // Build where clause using JOIN (more efficient than IN clause)
     const whereClause: any = {
       contact: {
         csvUpload: {
@@ -73,7 +73,7 @@ export class ScrapingHistoryService {
       }
     }
 
-    // Add business name filter
+    // Add business name filter (can be done in query with JOIN)
     if (businessName) {
       whereClause.contact.businessName = {
         contains: businessName,
@@ -91,73 +91,54 @@ export class ScrapingHistoryService {
       orderBy.method = sortOrder;
     }
 
-    // Get total count
-    const totalCount = await client.scrapedData.count({
-      where: whereClause,
-    });
-
-    // Get paginated results
+    // OPTIMIZED: Only get totalItems count for pagination (skip success/fail counts)
+    // Run count and data queries in parallel for better performance
     const skip = (page - 1) * limit;
-    const scrapedData = await client.scrapedData.findMany({
-      where: whereClause,
-      orderBy,
-      skip,
-      take: limit,
-      include: {
-        contact: {
-          select: {
-            id: true,
-            businessName: true,
-            email: true,
-            website: true,
-            status: true,
+    
+    const [totalItems, scrapedData] = await Promise.all([
+      client.scrapedData.count({ where: whereClause }),
+      client.scrapedData.findMany({
+        where: whereClause,
+        orderBy,
+        skip,
+        take: limit,
+        include: {
+          contact: {
+            select: {
+              id: true,
+              businessName: true,
+              email: true,
+              website: true,
+              status: true,
+            },
           },
         },
-      },
-    });
+      }),
+    ]);
 
-    // Transform to DTO format
-    const recentActivity: ScrapingHistoryItemDto[] = scrapedData.map((data) => {
-      const pagesScraped = this.getPagesScraped(data);
-      const contentLength = this.calculateContentLength(data);
-
+    // Transform to DTO format - simplified without scraping details
+    const recentActivity: ScrapingHistoryItemDto[] = scrapedData.map((data: any) => {
       return {
         id: data.id,
         contactId: data.contactId,
         businessName: data.contact.businessName,
         email: data.contact.email || '',
         website: data.contact.website || '',
-        scrapedAt: data.scrapedAt,
-        method: data.method,
-        success: data.scrapeSuccess,
-        errorMessage: data.errorMessage || undefined,
-        discoveredUrl: data.discoveredUrl || undefined,
-        pagesScraped,
-        extractedEmails: data.extractedEmails?.length || 0,
-        extractedPhones: data.extractedPhones?.length || 0,
-        contentLength,
+        // Remove unnecessary scraping details fields
       };
     });
 
-    // Get success/failure counts
-    const successfulCount = await client.scrapedData.count({
-      where: { ...whereClause, scrapeSuccess: true },
-    });
-
-    const failedCount = await client.scrapedData.count({
-      where: { ...whereClause, scrapeSuccess: false },
-    });
-
+    // Return without success/fail counts (generation page doesn't need them)
     return {
-      totalScrapes: totalCount,
-      successfulScrapes: successfulCount,
-      failedScrapes: failedCount,
+      totalScrapes: 0, // Not used by generation page
+      successfulScrapes: 0, // Not used by generation page
+      failedScrapes: 0, // Not used by generation page
       recentActivity,
       pagination: {
         page,
         limit,
-        totalPages: Math.ceil(totalCount / limit),
-        totalItems: totalCount,
+        totalPages: Math.ceil(totalItems / limit),
+        totalItems, // Used for pagination
       },
     };
   }

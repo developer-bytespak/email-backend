@@ -42,6 +42,8 @@ model CsvUpload {
   createdAt         DateTime        @default(now())
   client            Client          @relation(fields: [clientId], references: [id])
   contacts          Contact[]
+
+  @@index([clientId]) // Critical for JOIN performance in scraping history queries
 }
 
 enum CsvUploadStatus {
@@ -205,14 +207,15 @@ enum EmailLogStatus {
 }
 
 model ProductService {
-  id          Int                 @id @default(autoincrement())
-  clientId    Int
-  type        ProductServiceType?
-  name        String
-  description String?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @default(now()) @updatedAt
-  client      Client              @relation(fields: [clientId], references: [id])
+  id           Int                 @id @default(autoincrement())
+  clientId     Int
+  type         ProductServiceType?
+  name         String
+  businessName String
+  description  String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @default(now()) @updatedAt
+  client       Client              @relation(fields: [clientId], references: [id])
 }
 
 enum ProductServiceType {
@@ -230,7 +233,7 @@ model ClientEmail {
   totalCounter     Int               @default(0)
   currentCounter   Int               @default(0)
   timestamp        DateTime?
-  limit            Int               @default(500)
+  limit            Int               @default(100)
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @default(now()) @updatedAt
 

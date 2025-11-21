@@ -143,6 +143,7 @@ export class EmailsController {
    * Get email logs (history) for a specific clientEmailId
    * GET /emails/logs/client-email/:clientEmailId
    * Returns all emails sent from this email address
+   * @deprecated Use getEmailLogsByClient instead for better performance
    */
   @Get('logs/client-email/:clientEmailId')
   async getEmailLogs(@Param('clientEmailId', ParseIntPipe) clientEmailId: number) {
@@ -153,6 +154,59 @@ export class EmailsController {
         success: true,
         count: logs.length,
         data: logs,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to retrieve email logs',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Get all email logs for a specific client
+   * GET /emails/logs/client/:clientId?limit=100&offset=0&dateFrom=2025-01-01&dateTo=2025-12-31&includeFullBody=false
+   * Returns all emails sent from any email address belonging to this client
+   * OPTIMIZED: Single query instead of N queries (one per clientEmailId)
+   * OPTIMIZED: Reduced payload size, pagination, and date filtering
+   * 
+   * Query Parameters:
+   * - limit: Number of records to return (default: 100, max: 500)
+   * - offset: Number of records to skip (default: 0)
+   * - dateFrom: Start date (ISO string, default: 90 days ago)
+   * - dateTo: End date (ISO string, default: now)
+   * - includeFullBody: Include full email body text (default: false, reduces payload significantly)
+   */
+  @Get('logs/client/:clientId')
+  async getEmailLogsByClient(
+    @Param('clientId', ParseIntPipe) clientId: number,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('includeFullBody') includeFullBody?: string,
+  ) {
+    try {
+      const limitNum = limit ? Math.min(parseInt(limit, 10), 500) : 100; // Max 500 records
+      const offsetNum = offset ? parseInt(offset, 10) : 0;
+      const includeFullBodyBool = includeFullBody === 'true' || includeFullBody === '1';
+      
+      const result = await this.emailsService.getEmailLogsByClientId(clientId, {
+        limit: limitNum,
+        offset: offsetNum,
+        dateFrom: dateFrom ? new Date(dateFrom) : undefined,
+        dateTo: dateTo ? new Date(dateTo) : undefined,
+        includeFullBody: includeFullBodyBool,
+      });
+      
+      return {
+        message: 'Email logs retrieved successfully',
+        success: true,
+        count: result.logs.length,
+        total: result.total,
+        limit: limitNum,
+        offset: offsetNum,
+        data: result.logs,
       };
     } catch (error) {
       throw new HttpException(
