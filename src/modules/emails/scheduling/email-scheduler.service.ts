@@ -1,9 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
 import { SendGridService } from '../delivery/sendgrid/sendgrid.service';
 import { InboxOptimizationService } from '../optimization/inbox-optimization.service';
 import { UnsubscribeService } from '../unsubscribe/unsubscribe.service';
 import { EmailTrackingService } from '../tracking/email-tracking.service';
+import { QueueRealtimeService } from '../realtime/queue-realtime.service';
 
 @Injectable()
 export class EmailSchedulerService implements OnModuleInit {
@@ -17,6 +18,8 @@ export class EmailSchedulerService implements OnModuleInit {
     private readonly optimizationService: InboxOptimizationService,
     private readonly unsubscribeService: UnsubscribeService,
     private readonly trackingService: EmailTrackingService,
+    @Inject(forwardRef(() => QueueRealtimeService))
+    private readonly queueRealtimeService: QueueRealtimeService,
   ) {}
 
   /**
@@ -57,9 +60,10 @@ export class EmailSchedulerService implements OnModuleInit {
       where: { emailDraftId: draftId },
     });
 
+    let queueItem;
     if (existing) {
       // Update existing queue entry
-      return await scrapingClient.emailQueue.update({
+      queueItem = await scrapingClient.emailQueue.update({
         where: { emailDraftId: draftId },
         data: {
           scheduledAt,
@@ -67,17 +71,32 @@ export class EmailSchedulerService implements OnModuleInit {
           priority: this.calculatePriority(scheduledAt),
         },
       });
+    } else {
+      // Create new queue entry
+      queueItem = await scrapingClient.emailQueue.create({
+        data: {
+          emailDraftId: draftId,
+          scheduledAt,
+          status: 'pending',
+          priority: this.calculatePriority(scheduledAt),
+        },
+      });
     }
 
-    // Create new queue entry
-    return await scrapingClient.emailQueue.create({
+    // Publish real-time update
+    await this.queueRealtimeService.publishQueueUpdate({
+      type: 'queue:added',
+      queueId: queueItem.id,
+      emailDraftId: draftId,
+      status: 'pending',
       data: {
+        queueId: queueItem.id,
         emailDraftId: draftId,
-        scheduledAt,
-        status: 'pending',
-        priority: this.calculatePriority(scheduledAt),
+        scheduledAt: scheduledAt.toISOString(),
       },
     });
+
+    return queueItem;
   }
 
   /**
@@ -482,6 +501,20 @@ export class EmailSchedulerService implements OnModuleInit {
         },
       });
 
+      // Publish real-time update to connected clients
+      await this.queueRealtimeService.publishQueueUpdate({
+        type: 'queue:sent',
+        queueId: queueItem.id,
+        emailDraftId: draft.id,
+        status: 'sent',
+        data: {
+          queueId: queueItem.id,
+          emailDraftId: draft.id,
+          emailLogId: emailLog.id,
+          messageId: sendResult.messageId,
+        },
+      });
+
       this.logger.log(`✅ Queued email sent (Queue ID: ${queueItem.id}, EmailLog ID: ${emailLog.id})`);
     } catch (error) {
       this.logger.error(`❌ Failed to send queued email ${queueItem.id}:`, error);
@@ -619,9 +652,27 @@ export class EmailSchedulerService implements OnModuleInit {
   async removeFromQueue(draftId: number): Promise<void> {
     const scrapingClient = await this.prisma.getScrapingClient();
     
-    await scrapingClient.emailQueue.delete({
+    // Get queue item before deleting
+    const queueItem = await scrapingClient.emailQueue.findUnique({
       where: { emailDraftId: draftId },
     });
+    
+    if (queueItem) {
+      await scrapingClient.emailQueue.delete({
+        where: { emailDraftId: draftId },
+      });
+
+      // Publish real-time update
+      await this.queueRealtimeService.publishQueueUpdate({
+        type: 'queue:removed',
+        queueId: queueItem.id,
+        emailDraftId: draftId,
+        data: {
+          queueId: queueItem.id,
+          emailDraftId: draftId,
+        },
+      });
+    }
   }
 
   /**

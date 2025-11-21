@@ -14,6 +14,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         (request) => {
           return request?.cookies?.access_token;
         },
+        // Fallback: try to get token from query params (for EventSource/SSE)
+        (request) => {
+          return request?.query?.token as string | undefined;
+        },
       ]),
       ignoreExpiration: false,
       secretOrKey: process.env.JWT_SECRET || 'your-secret-key',
