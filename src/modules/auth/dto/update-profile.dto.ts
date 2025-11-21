@@ -1,4 +1,24 @@
-import { IsString, IsOptional, MinLength, Matches } from 'class-validator';
+import { IsString, IsOptional, MinLength, Matches, IsArray, ValidateNested, IsIn, IsNumber, IsNotEmpty } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class UpdateProductServiceDto {
+  @IsNumber()
+  @IsOptional()
+  id?: number;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['product', 'service'])
+  type?: 'product' | 'service';
+}
 
 export class UpdateProfileDto {
   @IsString()
@@ -20,6 +40,20 @@ export class UpdateProfileDto {
   @IsString()
   @IsOptional()
   address?: string;
+
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @IsString()
+  @IsOptional()
+  companyDescription?: string;
+
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateProductServiceDto)
+  productsServices?: UpdateProductServiceDto[];
 
   @IsString()
   @IsOptional()

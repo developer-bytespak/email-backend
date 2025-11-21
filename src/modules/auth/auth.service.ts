@@ -14,7 +14,7 @@ export class AuthService {
   ) {}
 
   async signup(signupDto: SignupDto) {
-    const { email, password, ...clientData } = signupDto;
+    const { email, password, productsServices, companyName, companyDescription, ...clientData } = signupDto;
 
     // Check if client already exists using Supabase strategy
     const existingClient = await this.prisma.executeWithSupabaseStrategy(async () => {
@@ -30,6 +30,9 @@ export class AuthService {
     // Hash password
     const saltRounds = 10;
     const hashPassword = await bcrypt.hash(password, saltRounds);
+
+    // Get scraping client for ProductService creation
+    const scrapingClient = await this.prisma.getScrapingClient();
 
     // Create client using Supabase strategy
     const client = await this.prisma.executeWithSupabaseStrategy(async () => {
@@ -51,6 +54,18 @@ export class AuthService {
         },
       });
     });
+
+    // Create products/services records
+    if (productsServices && productsServices.length > 0) {
+      await scrapingClient.productService.createMany({
+        data: productsServices.map(ps => ({
+          clientId: client.id,
+          name: ps.name,
+          description: ps.description || null,
+          type: ps.type || null,
+        })),
+      });
+    }
 
     return client;
   }
@@ -159,7 +174,25 @@ export class AuthService {
       throw new UnauthorizedException('Client not found');
     }
 
-    return client;
+    // Get products/services for the client
+    const scrapingClient = await this.prisma.getScrapingClient();
+    const productsServices = await scrapingClient.productService.findMany({
+      where: { clientId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        type: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      ...client,
+      productsServices,
+    };
   }
 
   async updateProfile(clientId: number, updateProfileDto: UpdateProfileDto) {
@@ -217,30 +250,122 @@ export class AuthService {
       throw new UnauthorizedException('New password is required to change password');
     }
 
-    // Check if there's anything to update
-    if (Object.keys(updateData).length === 0) {
+    // Update client profile if there's any data to update
+    let updatedClient;
+    if (Object.keys(updateData).length > 0) {
+      updatedClient = await this.prisma.executeWithSupabaseStrategy(async () => {
+        return await this.prisma.client.update({
+          where: { id: clientId },
+          data: updateData,
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            city: true,
+            country: true,
+            address: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      });
+    } else {
+      // Get client without updating
+      updatedClient = await this.prisma.executeWithSupabaseStrategy(async () => {
+        return await this.prisma.client.findUnique({
+          where: { id: clientId },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            city: true,
+            country: true,
+            address: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      });
+    }
+
+    // Handle products/services update
+    const scrapingClient = await this.prisma.getScrapingClient();
+    
+    if (updateProfileDto.productsServices !== undefined) {
+      // Get existing products/services
+      const existingProductsServices = await scrapingClient.productService.findMany({
+        where: { clientId },
+        select: { id: true },
+      });
+
+      const existingIds = new Set(existingProductsServices.map(ps => ps.id));
+      const incomingIds = new Set(
+        updateProfileDto.productsServices
+          .filter(ps => ps.id !== undefined)
+          .map(ps => ps.id)
+      );
+
+      // Delete products/services that are not in the incoming array
+      const idsToDelete = Array.from(existingIds).filter(id => !incomingIds.has(id));
+      if (idsToDelete.length > 0) {
+        await scrapingClient.productService.deleteMany({
+          where: {
+            id: { in: idsToDelete },
+            clientId,
+          },
+        });
+      }
+
+      // Update or create products/services
+      for (const ps of updateProfileDto.productsServices) {
+        if (ps.id && incomingIds.has(ps.id)) {
+          // Update existing
+          await scrapingClient.productService.update({
+            where: { id: ps.id },
+            data: {
+              name: ps.name,
+              description: ps.description || null,
+              type: ps.type || null,
+            },
+          });
+        } else {
+          // Create new
+          await scrapingClient.productService.create({
+            data: {
+              clientId,
+              name: ps.name,
+              description: ps.description || null,
+              type: ps.type || null,
+            },
+          });
+        }
+      }
+    }
+
+    // Get updated products/services
+    const productsServices = await scrapingClient.productService.findMany({
+      where: { clientId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        type: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Check if there's anything to update (client fields or products/services)
+    if (Object.keys(updateData).length === 0 && updateProfileDto.productsServices === undefined) {
       throw new BadRequestException('No fields provided to update');
     }
 
-    // Update client profile using Supabase strategy
-    const updatedClient = await this.prisma.executeWithSupabaseStrategy(async () => {
-      return await this.prisma.client.update({
-        where: { id: clientId },
-        data: updateData,
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          phone: true,
-          city: true,
-          country: true,
-          address: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      });
-    });
-
-    return updatedClient;
+    return {
+      ...updatedClient,
+      productsServices,
+    };
   }
 }
