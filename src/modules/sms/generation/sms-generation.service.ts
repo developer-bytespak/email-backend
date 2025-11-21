@@ -110,8 +110,19 @@ export class SmsGenerationService {
         throw new BadRequestException(`ClientSms with ID ${request.clientSmsId} is not active`);
       }
 
+      // Get client's products/services
+      const clientId = contact.csvUpload.client.id;
+      const productServices = await scrapingClient.productService.findMany({
+        where: { clientId },
+        select: {
+          name: true,
+          description: true,
+          type: true,
+        },
+      });
+
       // Generate SMS content using Gemini AI
-      const smsContent = await this.generateSmsContent(summary, contact);
+      const smsContent = await this.generateSmsContent(summary, contact, productServices);
 
       // Save SMS draft to database
       const smsDraft = await scrapingClient.smsDraft.create({
@@ -150,106 +161,126 @@ export class SmsGenerationService {
    * Generate SMS content using Gemini AI with the provided prompt
    * Uses research-driven, direct-response SMS copywriting approach
    */
-  private async generateSmsContent(summary: any, contact: any): Promise<string> {
+  private async generateSmsContent(summary: any, contact: any, productServices?: any[]): Promise<string> {
     // Format pain points for the prompt
     const painPointsFormatted = (summary.painPoints || []).map((painPoint: string) => {
       return `- ${painPoint}`;
     }).join('\n');
 
-    const smsPrompt = `
-You are a skilled SMS copywriter specializing in personalized business outreach.
-
-Your goal is to craft a short, conversational, and value-driven text message (SMS) that builds curiosity and invites a quick response.
-
-The tone should be friendly, confident, and professional, similar to how a founder or consultant would text a potential client — clear, human, and respectful of their time.
-
-Inputs:
-
-1. Company Summary:
-${summary.summaryText}
-
-2. Pain Points Identified:
-${painPointsFormatted || 'No specific pain points identified'}
-
-3. Our Services (Bytes Platform):
-
-Bytes Platform is a US-based LLC offering:
-- Web & mobile app development
+    // Format company services dynamically
+    let servicesText = '';
+    if (productServices && productServices.length > 0) {
+      // Format each service: "- Name (Description if available)"
+      servicesText = productServices.map(ps => {
+        return `- ${ps.name}`;
+      }).join('\n');
+    } else {
+      // Fallback to default if no ProductService exists
+      servicesText = `- Web & mobile app development
 - AI SaaS products
 - Shopify & e-commerce solutions
 - WordPress & plugin development
-- UI/UX design
+- UI/UX design`;
+    }
 
-We help businesses turn ideas into working products efficiently using modern technologies.
+    const smsPrompt = `
+You are a skilled SMS copywriter specializing in short, clear, personalized business outreach.
+
+Your task is to write ONE concise SMS (not multiple), max 320 characters, in the same style as these examples:
+
+Finding SDDOT contractors can be a hassle, right? We simplify the bidding process. Open to a quick chat?
+
+Struggling with data silos? FlexDataAI can help integrate your systems & boost insights. Open to a quick chat?
+
+Need help streamlining bookings for your moving service? Speedy Moving could benefit from automated scheduling. Open to a quick chat?
+
+The SMS should feel friendly, confident, and conversational — like a founder texting another professional. No salesy language.
+
+Inputs (User Will Provide):
+
+Company Summary:
+${summary.summaryText}
+
+Pain Points:
+${painPointsFormatted || 'No specific pain points identified'}
+
+Our Services (Bytes Platform):
+${servicesText}
+
+We help companies turn ideas into working digital products using modern technologies.
 
 Instructions for the Model:
 
-Analyze the Inputs:
-- Understand the company's focus and key pain points.
-- Identify which Bytes Platform service best addresses their challenges.
+Analyze the company summary + pain points.
 
-Write 2 Personalized SMS Variants (each ≤ 320 characters):
-- Begin with a natural, personalized opener referencing their company or focus.
-- Acknowledge a pain point or opportunity briefly.
-- Suggest how Bytes Platform can help — one clear benefit only.
-- End with a simple, conversational CTA (e.g., "Worth a quick call?" or "Want me to share a quick example?").
+Select the ONE Bytes Platform service that best fits.
+
+Write ONE personalized SMS, max 320 characters.
+
+Structure the SMS like this:
+
+Natural opener referencing their company or a clear pain point.
+
+Brief acknowledgment of the challenge or opportunity.
+
+One simple way Bytes Platform can help (one benefit only).
+
+End with a light CTA like: Open to a quick chat?
 
 Tone Guidelines:
-- Professional but relaxed (no slang, no hard sell).
-- Natural, like a text between peers.
-- Avoid spammy or promotional words ("Free," "Limited time," "Offer").
-- Keep punctuation light — use commas and periods, not excessive exclamation marks.
 
-Output Format (Mandatory):
+Professional but relaxed
 
-SMS Variant 1:
-[First SMS option, ≤ 320 characters]
+No hype, no emojis
 
-SMS Variant 2:
-[Second SMS option, ≤ 320 characters]
+Not promotional or spammy
 
-Rationale:
-[Explain briefly which pain point was targeted and which Bytes Platform service fits]
+Light punctuation (commas and periods only)
 
-OUTPUT:
-Return the response in the exact format above with "SMS Variant 1:", "SMS Variant 2:", and "Rationale:" labels.
+Clear, human, and respectful of their time
+
+Output Format (Required):
+
+SMS:
+[Write ONE short personalized SMS only — no variant]
 `;
 
     try {
       // Use the existing Gemini integration
       const response = await this.callGeminiForSms(smsPrompt);
 
-      // Parse the response to extract SMS variants
+      // Parse the response to extract SMS
       // Expected format:
-      // SMS Variant 1: [text]
-      // SMS Variant 2: [text]
-      // Rationale: [text]
+      // SMS: [text]
       
       let smsMessage = '';
-      const variant1Match = response.match(/SMS Variant 1:\s*(.+?)(?=\nSMS Variant 2:|$)/is);
-      const variant2Match = response.match(/SMS Variant 2:\s*(.+?)(?=\nRationale:|$)/is);
-      const rationaleMatch = response.match(/Rationale:\s*(.+?)$/is);
+      const smsMatch = response.match(/SMS:\s*(.+?)(?:\n|$)/is);
 
-      // Extract the first variant (preferred) or second variant as fallback
-      if (variant1Match && variant1Match[1]) {
-        smsMessage = variant1Match[1].trim();
-      } else if (variant2Match && variant2Match[1]) {
-        smsMessage = variant2Match[1].trim();
+      // Extract the SMS text
+      if (smsMatch && smsMatch[1]) {
+        smsMessage = smsMatch[1].trim();
       } else {
         // Fallback: try to extract any text that looks like an SMS
-        const lines = response.split('\n').filter(line => line.trim().length > 0);
-        smsMessage = lines.find(line => line.length <= 320 && line.length > 20) || response.trim();
+        // Remove "SMS:" label if present
+        let cleanResponse = response.replace(/SMS:\s*/i, '').trim();
+        const lines = cleanResponse.split('\n').filter(line => line.trim().length > 0);
+        
+        // Find the first line that looks like an SMS (20-320 characters)
+        smsMessage = lines.find(line => line.length <= 320 && line.length > 20) || cleanResponse.trim();
+        
+        // If still no good match, take first non-empty line
+        if (!smsMessage || smsMessage.length < 20) {
+          smsMessage = lines[0]?.trim() || response.trim();
+        }
       }
 
       // Clean the response (remove any extra formatting, quotes, etc.)
       smsMessage = smsMessage.replace(/^["']|["']$/g, '').trim();
+      
+      // Remove any remaining label prefixes
+      smsMessage = smsMessage.replace(/^(SMS|Variant|Rationale):\s*/i, '').trim();
 
-      // Log rationale if available
-      if (rationaleMatch && rationaleMatch[1]) {
-        this.logger.log(`SMS Rationale: ${rationaleMatch[1].trim()}`);
-      }
-
-      // Validate character limit (≤ 320 characters as per new prompt)
+      // Validate character limit (≤ 320 characters)
       if (smsMessage.length > 320) {
         this.logger.warn(`SMS message exceeds 320 characters (${smsMessage.length}), truncating...`);
         return smsMessage.substring(0, 317) + '...';

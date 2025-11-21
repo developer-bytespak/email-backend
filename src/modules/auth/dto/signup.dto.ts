@@ -1,4 +1,20 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MinLength, IsOptional, IsArray, ValidateNested, IsIn, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class ProductServiceDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['product', 'service'])
+  type?: 'product' | 'service';
+}
 
 export class SignupDto {
   @IsString()
@@ -29,4 +45,18 @@ export class SignupDto {
   @IsString()
   @IsNotEmpty()
   address: string;
+
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
+  @IsString()
+  @IsOptional()
+  companyDescription?: string;
+
+  @IsArray()
+  @ArrayMinSize(1, { message: 'At least one product or service is required' })
+  @ValidateNested({ each: true })
+  @Type(() => ProductServiceDto)
+  productsServices: ProductServiceDto[];
 }
