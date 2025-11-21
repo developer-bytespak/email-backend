@@ -47,7 +47,7 @@ export class ScrapingHistoryQueryDto {
   @IsNumber()
   @Min(1)
   @Max(100)
-  limit?: number = 50;
+  limit?: number = 25;
 
   @IsOptional()
   @IsEnum(['scrapedAt', 'businessName', 'method'])
@@ -64,15 +64,16 @@ export class ScrapingHistoryItemDto {
   businessName: string;
   email: string;
   website: string;
-  scrapedAt: Date;
-  method: ScrapeMethod;
-  success: boolean;
+  // Make scraping details optional since we're not using them
+  scrapedAt?: Date;
+  method?: ScrapeMethod;
+  success?: boolean;
   errorMessage?: string | null;
   discoveredUrl?: string | null;
-  pagesScraped: string[];
-  extractedEmails: number;
-  extractedPhones: number;
-  contentLength: number;
+  pagesScraped?: string[];
+  extractedEmails?: number;
+  extractedPhones?: number;
+  contentLength?: number;
   processingTime?: number;
 }
 

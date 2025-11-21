@@ -6,6 +6,7 @@ import { SendGridModule } from '../delivery/sendgrid/sendgrid.module';
 import { InboxOptimizationModule } from '../optimization/inbox-optimization.module';
 import { UnsubscribeModule } from '../unsubscribe/unsubscribe.module';
 import { EmailTrackingModule } from '../tracking/email-tracking.module';
+import { QueueRealtimeModule } from '../realtime/queue-realtime.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { EmailTrackingModule } from '../tracking/email-tracking.module';
     InboxOptimizationModule,
     UnsubscribeModule,
     EmailTrackingModule,
+    QueueRealtimeModule,
   ],
   controllers: [EmailSchedulerController],
   providers: [EmailSchedulerService],

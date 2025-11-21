@@ -484,6 +484,138 @@ export class EmailsService {
   }
 
   /**
+   * Get all email logs for a specific clientId
+   * Returns all emails sent from any email address belonging to this client
+   * OPTIMIZED: Single query instead of N queries (one per clientEmailId)
+   * OPTIMIZED: Reduced payload size by excluding unused fields
+   * OPTIMIZED: Pagination and date filtering for better performance
+   */
+  async getEmailLogsByClientId(
+    clientId: number,
+    options?: {
+      limit?: number;
+      offset?: number;
+      dateFrom?: Date;
+      dateTo?: Date;
+      includeFullBody?: boolean; // For detail view - load body on demand
+    }
+  ): Promise<{ logs: any[]; total: number }> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Verify client exists
+    const client = await scrapingClient.client.findUnique({
+      where: { id: clientId },
+      select: { id: true },
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Client with ID ${clientId} not found`);
+    }
+
+    // Build where clause with date filtering
+    const where: any = {
+      emailDraft: {
+        clientEmail: {
+          clientId: clientId,
+        },
+      },
+    };
+
+    // Add date range filtering (default to last 90 days if not specified)
+    if (options?.dateFrom || options?.dateTo) {
+      where.sentAt = {};
+      if (options.dateFrom) {
+        where.sentAt.gte = options.dateFrom;
+      }
+      if (options.dateTo) {
+        where.sentAt.lte = options.dateTo;
+      }
+    } else if (!options?.dateFrom && !options?.dateTo) {
+      // Default to last 90 days for better performance
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      where.sentAt = { gte: ninetyDaysAgo };
+    }
+
+    // Get total count first (for pagination)
+    const total = await scrapingClient.emailLog.count({ where });
+
+    // OPTIMIZED: Only select necessary fields to reduce payload size
+    const logs = await scrapingClient.emailLog.findMany({
+      where,
+      select: {
+        // Only essential EmailLog fields (removed unused: providerResponse, tokens, messageId, etc.)
+        id: true,
+        contactId: true,
+        status: true,
+        sentAt: true,
+        // Optional: only if needed for detail view
+        ...(options?.includeFullBody && {
+          deliveredAt: true,
+          spamScore: true,
+        }),
+        contact: {
+          select: {
+            id: true,
+            businessName: true,
+            email: true,
+            // Removed: phone (not displayed in history list)
+          },
+        },
+        emailDraft: {
+          select: {
+            id: true,
+            subjectLines: true, // Only first one is used, but array is small
+            // Conditionally include bodyText (large field - exclude from list view)
+            ...(options?.includeFullBody ? {
+              bodyText: true,
+            } : {}),
+            // Only emailAddress from clientEmail (removed: id, status, counters, limit)
+            clientEmail: {
+              select: {
+                emailAddress: true, // Only field used in history list
+                // Removed: id, status, currentCounter, totalCounter, limit (not displayed)
+              },
+            },
+            // Removed: status, createdAt (not used in history list)
+          },
+        },
+        // Include engagements for counting (we'll transform to counts)
+        emailEngagements: {
+          select: {
+            engagementType: true, // Only need type for counting
+            // Removed: id, engagedAt, url (not used in history list)
+          },
+        },
+      },
+      orderBy: { sentAt: 'desc' }, // Newest first
+      take: options?.limit || 100, // Default limit: 100 records
+      skip: options?.offset || 0,
+    });
+
+    // Transform to add engagement counts and remove full engagements array
+    const logsWithCounts = logs.map((log) => {
+      const opens = log.emailEngagements?.filter((e: any) => e.engagementType === 'open').length || 0;
+      const clicks = log.emailEngagements?.filter((e: any) => e.engagementType === 'click').length || 0;
+      
+      // Remove emailEngagements array, add counts instead
+      const { emailEngagements, ...logWithoutEngagements } = log as any;
+      return {
+        ...logWithoutEngagements,
+        // Add engagement counts instead of full array
+        opens,
+        clicks,
+      };
+    });
+
+    this.logger.log(
+      `✅ Retrieved ${logsWithCounts.length} of ${total} email logs for Client ${clientId} (offset: ${options?.offset || 0}, limit: ${options?.limit || 100})`
+    );
+
+    return { logs: logsWithCounts, total };
+  }
+
+  /**
    * Get all client emails for a specific client
    */
   async getClientEmails(clientId: number): Promise<any[]> {

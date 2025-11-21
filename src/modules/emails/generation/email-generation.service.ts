@@ -632,16 +632,16 @@ Best regards,
       contactId: number;
       hasSummary: boolean;
       hasEmailDraft: boolean;
-      hasSMSDraft: boolean;
+      hasSMSDraft?: boolean;
       emailDraftId: number | null;
-      smsDraftId: number | null;
-      smsStatus: string | null;
+      smsDraftId?: number | null;
+      smsStatus?: string | null;
     }>;
   }> {
     try {
       const scrapingClient = await this.prisma.getScrapingClient();
 
-      const includeSms = options?.includeSms !== undefined ? options.includeSms : true;
+      const includeSms = options?.includeSms !== undefined ? options.includeSms : false;
 
       // Fetch summaries for all contacts
       const summaries = await scrapingClient.summary.findMany({
@@ -703,28 +703,33 @@ Best regards,
 
       // Build response array
       const statusData = contactIds.map(contactId => {
-        const smsDraftId = includeSms ? smsDraftMap.get(contactId) || null : null;
-        const smsWasSent =
-          includeSms && smsDraftId ? smsSentMap.get(smsDraftId) || false : false;
-        const smsDraftStatus = includeSms ? smsDraftStatusMap.get(contactId) : undefined;
-        
-        // Determine SMS status: 'sent' if log shows success, otherwise use draft status or 'draft'
-        let smsStatus: string | null = null;
-        if (smsWasSent) {
-          smsStatus = 'sent';
-        } else if (smsDraftStatus) {
-          smsStatus = smsDraftStatus; // 'draft' or 'ready'
-        }
-
-        return {
+        const baseResponse: any = {
           contactId,
           hasSummary: summaryMap.has(contactId),
           hasEmailDraft: emailDraftMap.has(contactId),
-          hasSMSDraft: smsDraftMap.has(contactId),
           emailDraftId: emailDraftMap.get(contactId) || null,
-          smsDraftId,
-          smsStatus,
         };
+
+        // Only include SMS fields if requested
+        if (includeSms) {
+          const smsDraftId = smsDraftMap.get(contactId) || null;
+          const smsWasSent = smsDraftId ? smsSentMap.get(smsDraftId) || false : false;
+          const smsDraftStatus = smsDraftStatusMap.get(contactId);
+          
+          // Determine SMS status: 'sent' if log shows success, otherwise use draft status or 'draft'
+          let smsStatus: string | null = null;
+          if (smsWasSent) {
+            smsStatus = 'sent';
+          } else if (smsDraftStatus) {
+            smsStatus = smsDraftStatus; // 'draft' or 'ready'
+          }
+
+          baseResponse.hasSMSDraft = smsDraftMap.has(contactId);
+          baseResponse.smsDraftId = smsDraftId;
+          baseResponse.smsStatus = smsStatus;
+        }
+
+        return baseResponse;
       });
 
       return {

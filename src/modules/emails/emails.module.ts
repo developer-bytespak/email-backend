@@ -9,6 +9,7 @@ import { EmailTrackingModule } from './tracking/email-tracking.module';
 import { EmailSchedulerModule } from './scheduling/email-scheduler.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { EmailAnalyticsModule } from './analytics/email-analytics.module';
+import { QueueRealtimeModule } from './realtime/queue-realtime.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { EmailAnalyticsModule } from './analytics/email-analytics.module';
     EmailSchedulerModule,
     WebhooksModule,
     EmailAnalyticsModule,
+    QueueRealtimeModule,
   ],
   controllers: [EmailsController],
   providers: [EmailsService],
