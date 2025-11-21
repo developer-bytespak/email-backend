@@ -61,6 +61,7 @@ export class AuthService {
         data: productsServices.map(ps => ({
           clientId: client.id,
           name: ps.name,
+          businessName: client.name, // Required field - use client's name as business name
           description: ps.description || null,
           type: ps.type || null,
         })),
@@ -336,6 +337,7 @@ export class AuthService {
             data: {
               clientId,
               name: ps.name,
+              businessName: existingClient.name, // Required field - use client's name as business name
               description: ps.description || null,
               type: ps.type || null,
             },
