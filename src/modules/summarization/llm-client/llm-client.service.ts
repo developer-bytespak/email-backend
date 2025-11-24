@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
 
 export interface GeminiResponse {
   summary: string;
@@ -15,7 +16,6 @@ export interface GeminiResponse {
 export class LlmClientService {
   private readonly logger = new Logger(LlmClientService.name);
   private readonly GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
-  private readonly GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
   
   private requestQueue: Array<() => Promise<any>> = [];
   private isProcessing = false;
@@ -87,11 +87,12 @@ Guidelines:
             await this.sleep(this.RATE_LIMIT_DELAY - timeSinceLastRequest);
           }
 
+          const apiKey = getNextGeminiApiKey();
           const response = await fetch(this.GEMINI_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': this.GEMINI_API_KEY,
+              'X-Goog-Api-Key': apiKey,
             },
             body: JSON.stringify({
               contents: [{
