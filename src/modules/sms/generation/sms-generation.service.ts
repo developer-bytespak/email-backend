@@ -110,19 +110,23 @@ export class SmsGenerationService {
         throw new BadRequestException(`ClientSms with ID ${request.clientSmsId} is not active`);
       }
 
-      // Get client's products/services
+      // Get client's products/services and businessName from ProductService table
       const clientId = contact.csvUpload.client.id;
       const productServices = await scrapingClient.productService.findMany({
         where: { clientId },
         select: {
           name: true,
+          businessName: true,
           description: true,
           type: true,
         },
       });
 
+      // Extract businessName from first ProductService record (all should have same businessName)
+      const businessName = productServices.length > 0 ? productServices[0].businessName : contact.csvUpload.client.name;
+
       // Generate SMS content using Gemini AI
-      const smsContent = await this.generateSmsContent(summary, contact, productServices);
+      const smsContent = await this.generateSmsContent(summary, contact, productServices, businessName);
 
       // Save SMS draft to database
       const smsDraft = await scrapingClient.smsDraft.create({
@@ -161,7 +165,7 @@ export class SmsGenerationService {
    * Generate SMS content using Gemini AI with the provided prompt
    * Uses research-driven, direct-response SMS copywriting approach
    */
-  private async generateSmsContent(summary: any, contact: any, productServices?: any[]): Promise<string> {
+  private async generateSmsContent(summary: any, contact: any, productServices?: any[], businessName?: string): Promise<string> {
     // Format pain points for the prompt
     const painPointsFormatted = (summary.painPoints || []).map((painPoint: string) => {
       return `- ${painPoint}`;
@@ -183,6 +187,18 @@ export class SmsGenerationService {
 - UI/UX design`;
     }
 
+    // Use businessName from ProductService or fallback to contact's businessName
+    const clientBusinessName = businessName || contact.businessName;
+
+    // Format services array for JSON
+    const servicesArray = productServices && productServices.length > 0 
+      ? productServices.map(ps => `"${ps.name}"`).join(', ')
+      : '';
+    const clientBusinessInfo = `{
+  "businessName": "${clientBusinessName}",
+  "services": [${servicesArray}]
+}`;
+
     const smsPrompt = `
 You are a skilled SMS copywriter specializing in short, clear, personalized business outreach.
 
@@ -203,6 +219,9 @@ ${summary.summaryText}
 
 Pain Points:
 ${painPointsFormatted || 'No specific pain points identified'}
+
+**CLIENT BUSINESS INFORMATION:**
+${clientBusinessInfo}
 
 Our Services (Bytes Platform):
 ${servicesText}

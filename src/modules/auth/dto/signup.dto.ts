@@ -48,11 +48,7 @@ export class SignupDto {
 
   @IsString()
   @IsOptional()
-  companyName?: string;
-
-  @IsString()
-  @IsOptional()
-  companyDescription?: string;
+  businessName?: string;
 
   @IsArray()
   @ArrayMinSize(1, { message: 'At least one product or service is required' })

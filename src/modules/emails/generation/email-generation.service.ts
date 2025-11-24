@@ -125,8 +125,23 @@ export class EmailGenerationService {
         throw new NotFoundException(`Client email with ID ${request.clientEmailId} not found`);
       }
 
+      // Get client's products/services and businessName from ProductService table
+      const clientId = clientEmail.clientId;
+      const productServices = await scrapingClient.productService.findMany({
+        where: { clientId },
+        select: {
+          name: true,
+          businessName: true,
+          description: true,
+          type: true,
+        },
+      });
+
+      // Extract businessName from first ProductService record (all should have same businessName)
+      const businessName = productServices.length > 0 ? productServices[0].businessName : contact.csvUpload.client.name;
+
       // Generate email content using Gemini AI
-      const emailContent = await this.generateEmailContent(summary, contact, request.tone || 'pro_friendly');
+      const emailContent = await this.generateEmailContent(summary, contact, request.tone || 'pro_friendly', productServices, businessName);
 
       // Save email draft to database
       const emailDraft = await scrapingClient.emailDraft.create({
@@ -170,9 +185,11 @@ export class EmailGenerationService {
   private async generateEmailContent(
     summary: any,
     contact: any,
-    tone: EmailTone
+    tone: EmailTone,
+    productServices?: any[],
+    businessName?: string
   ): Promise<GeneratedEmailContent> {
-    const prompt = this.buildEmailGenerationPrompt(summary, contact, tone);
+    const prompt = this.buildEmailGenerationPrompt(summary, contact, tone, productServices, businessName);
 
     try {
       // Call Gemini API directly for email generation
@@ -282,12 +299,41 @@ export class EmailGenerationService {
   /**
    * Build the prompt for email generation based on Bytes Platform requirements
    */
-  private buildEmailGenerationPrompt(summary: any, contact: any, tone: EmailTone): string {
+  private buildEmailGenerationPrompt(summary: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string): string {
     const toneInstructions = this.getToneInstructions(tone);
 
     // Extract scraped data details
     const scrapedData = summary.scrapedData;
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
+
+    // Format services from ProductService table
+    let servicesText = '';
+    if (productServices && productServices.length > 0) {
+      servicesText = productServices.map(ps => {
+        const desc = ps.description ? ` (${ps.description})` : '';
+        return `- ${ps.name}${desc}`;
+      }).join('\n');
+    } else {
+      // Fallback to default services if none exist
+      servicesText = `- Custom web applications & dashboards
+- Mobile apps (iOS/Android)
+- AI integrations & SaaS products
+- E-commerce solutions (Shopify)
+- WordPress development
+- UI/UX design`;
+    }
+
+    // Use businessName from ProductService or fallback to contact's businessName
+    const clientBusinessName = businessName || contact.businessName;
+
+    // Format services array for JSON
+    const servicesArray = productServices && productServices.length > 0 
+      ? productServices.map(ps => `"${ps.name}"`).join(', ')
+      : '';
+    const clientBusinessInfo = `{
+  "businessName": "${clientBusinessName}",
+  "services": [${servicesArray}]
+}`;
 
     return `
 You are a B2B outreach specialist writing for Bytes Platform. Create a personalized email that directly addresses specific business challenges.
@@ -308,13 +354,11 @@ ${summary.strengths?.join(', ') || 'Not specified'}
 **WEBSITE CONTENT:**
 ${scrapedDetails}
 
+**CLIENT BUSINESS INFORMATION:**
+${clientBusinessInfo}
+
 **BYTES PLATFORM SERVICES:**
-- Custom web applications & dashboards
-- Mobile apps (iOS/Android)
-- AI integrations & SaaS products
-- E-commerce solutions (Shopify)
-- WordPress development
-- UI/UX design
+${servicesText}
 
 **REQUIREMENTS:**
 1. Reference a specific detail from their business analysis or website

@@ -14,7 +14,7 @@ export class AuthService {
   ) {}
 
   async signup(signupDto: SignupDto) {
-    const { email, password, productsServices, companyName, companyDescription, ...clientData } = signupDto;
+    const { email, password, productsServices, businessName, ...clientData } = signupDto;
 
     // Check if client already exists using Supabase strategy
     const existingClient = await this.prisma.executeWithSupabaseStrategy(async () => {
@@ -55,13 +55,16 @@ export class AuthService {
       });
     });
 
+    // Determine businessName: use provided businessName or fallback to client.name
+    const finalBusinessName = businessName || client.name;
+
     // Create products/services records
     if (productsServices && productsServices.length > 0) {
       await scrapingClient.productService.createMany({
         data: productsServices.map(ps => ({
           clientId: client.id,
           name: ps.name,
-          businessName: client.name, // Required field - use client's name as business name
+          businessName: finalBusinessName,
           description: ps.description || null,
           type: ps.type || null,
         })),
@@ -182,6 +185,7 @@ export class AuthService {
       select: {
         id: true,
         name: true,
+        businessName: true,
         description: true,
         type: true,
         createdAt: true,
@@ -295,6 +299,17 @@ export class AuthService {
     const scrapingClient = await this.prisma.getScrapingClient();
     
     if (updateProfileDto.productsServices !== undefined) {
+      // Fetch existing businessName from any existing ProductService record for this client
+      // If none exists, fallback to client.name
+      const existingProductService = await scrapingClient.productService.findFirst({
+        where: { clientId },
+        select: { businessName: true },
+        orderBy: { createdAt: 'asc' }, // Get the oldest one (from signup)
+      });
+
+      // Auto-fill businessName from existing record or use client name as fallback
+      const autoFilledBusinessName = existingProductService?.businessName || existingClient.name;
+
       // Get existing products/services
       const existingProductsServices = await scrapingClient.productService.findMany({
         where: { clientId },
@@ -322,22 +337,23 @@ export class AuthService {
       // Update or create products/services
       for (const ps of updateProfileDto.productsServices) {
         if (ps.id && incomingIds.has(ps.id)) {
-          // Update existing
+          // Update existing - businessName is auto-filled from existing record
           await scrapingClient.productService.update({
             where: { id: ps.id },
             data: {
               name: ps.name,
+              businessName: autoFilledBusinessName,
               description: ps.description || null,
               type: ps.type || null,
             },
           });
         } else {
-          // Create new
+          // Create new - businessName is auto-filled from existing record or client name
           await scrapingClient.productService.create({
             data: {
               clientId,
               name: ps.name,
-              businessName: existingClient.name, // Required field - use client's name as business name
+              businessName: autoFilledBusinessName,
               description: ps.description || null,
               type: ps.type || null,
             },
@@ -352,6 +368,7 @@ export class AuthService {
       select: {
         id: true,
         name: true,
+        businessName: true,
         description: true,
         type: true,
         createdAt: true,
