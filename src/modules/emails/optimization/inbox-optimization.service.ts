@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
 import { LlmClientService } from '../../summarization/llm-client/llm-client.service';
+import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
 
 export interface SpamCheckResult {
   score: number; // 0-100, higher = more spammy
@@ -225,13 +226,13 @@ Return ONLY valid JSON, no markdown formatting.`;
 
       // Use existing Gemini integration
       const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
-      const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
+      const apiKey = getNextGeminiApiKey();
 
       const response = await fetch(GEMINI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': GEMINI_API_KEY,
+          'X-Goog-Api-Key': apiKey,
         },
         body: JSON.stringify({
           contents: [{
