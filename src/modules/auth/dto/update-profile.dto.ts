@@ -41,14 +41,6 @@ export class UpdateProfileDto {
   @IsOptional()
   address?: string;
 
-  @IsString()
-  @IsOptional()
-  companyName?: string;
-
-  @IsString()
-  @IsOptional()
-  companyDescription?: string;
-
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })
