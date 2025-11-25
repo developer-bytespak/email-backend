@@ -1,7 +1,8 @@
 import { Controller, Post, Get, Body, Param, Delete, HttpException, HttpStatus, ValidationPipe, ParseIntPipe, UseGuards, Request, UnauthorizedException } from '@nestjs/common';
-import { IsNumber, IsString, IsOptional } from 'class-validator';
+import { IsNumber, IsString, IsOptional, Length } from 'class-validator';
 import { SmsService } from './sms.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PrismaService } from '../../config/prisma.service';
 
 export class SendSmsDraftDto {
   @IsNumber()
@@ -15,11 +16,24 @@ export class CreateClientSmsDto {
   @IsOptional()
   @IsString()
   providerSettings?: string;
+
+  @IsOptional()
+  @IsString()
+  countryCode?: string;
+}
+
+export class VerifySmsOtpDto {
+  @IsString()
+  @Length(4, 10)
+  code: string;
 }
 
 @Controller('sms')
 export class SmsController {
-  constructor(private readonly smsService: SmsService) {}
+  constructor(
+    private readonly smsService: SmsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   /**
    * Send an SMS draft
@@ -138,6 +152,88 @@ export class SmsController {
     } catch (error) {
       throw new HttpException(
         error.message || 'Failed to create client SMS number',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('client-sms/:id/request-otp')
+  async requestSmsOtp(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      // Try to determine if this is a clientSmsId or verificationId
+      // First check if it's a ClientSms, otherwise treat as verificationId
+      const scrapingClient = await this.prisma.getScrapingClient();
+      const clientSms = await scrapingClient.clientSms.findUnique({
+        where: { id },
+      });
+
+      let identifier: number | { verificationId: number };
+      if (clientSms && clientSms.clientId === clientId) {
+        // Old flow: clientSmsId exists
+        identifier = id;
+      } else {
+        // New flow: treat as verificationId
+        identifier = { verificationId: id };
+      }
+
+      const result = await this.smsService.requestSmsOtp(clientId, identifier);
+      return {
+        message: 'Verification code sent.',
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to send verification code',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('client-sms/:id/verify-otp')
+  async verifySmsOtp(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body(ValidationPipe) verifyDto: VerifySmsOtpDto,
+  ) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      // Try to determine if this is a clientSmsId or verificationId
+      // First check if it's a ClientSms, otherwise treat as verificationId
+      const scrapingClient = await this.prisma.getScrapingClient();
+      const clientSms = await scrapingClient.clientSms.findUnique({
+        where: { id },
+      });
+
+      let identifier: number | { verificationId: number };
+      if (clientSms && clientSms.clientId === clientId) {
+        // Old flow: clientSmsId exists
+        identifier = id;
+      } else {
+        // New flow: treat as verificationId
+        identifier = { verificationId: id };
+      }
+
+      const result = await this.smsService.verifySmsOtp(clientId, identifier, verifyDto.code);
+      return {
+        message: result.message || 'Phone number verified successfully',
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to verify phone number',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
