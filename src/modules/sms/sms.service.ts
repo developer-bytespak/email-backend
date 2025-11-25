@@ -1,14 +1,23 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { TwilioService } from './twilio/twilio.service';
+import { OtpService } from '../../common/services/otp.service';
+import { parsePhoneNumberFromString, CountryCode } from 'libphonenumber-js';
+
+// Temporary types until Prisma client is regenerated
+type SenderVerificationStatus = 'pending' | 'verified' | 'expired' | 'rejected';
+type SenderType = 'email' | 'sms';
 
 @Injectable()
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
+  private readonly otpResendIntervalMs = Number(process.env.SENDER_VERIFICATION_RESEND_SECONDS || '60') * 1000;
+  private readonly maxOtpAttempts = Number(process.env.SENDER_VERIFICATION_MAX_ATTEMPTS || '5');
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly twilioService: TwilioService,
+    private readonly otpService: OtpService,
   ) {}
 
   // Legacy methods (keeping for backward compatibility)
@@ -179,6 +188,11 @@ export class SmsService {
       }
 
       // Validate clientSms status
+      const verificationStatus = (clientSms as any).verificationStatus;
+      if (verificationStatus !== 'verified') {
+        throw new BadRequestException('SMS number must be verified before sending.');
+      }
+
       if (clientSms.status !== 'active') {
         throw new BadRequestException(`ClientSms with ID ${clientSms.id} is not active`);
       }
@@ -280,6 +294,7 @@ export class SmsService {
       where: {
         clientId,
         status: 'active',
+        ...({ verificationStatus: 'verified' } as any),
       },
       orderBy: [
         { currentCounter: 'asc' }, // Prioritize least-used
@@ -520,16 +535,27 @@ export class SmsService {
   /**
    * Get all client SMS numbers for a specific client
    */
+  /**
+   * Get all client SMS numbers for a specific client
+   * Includes both verified ClientSms records and pending verifications
+   */
   async getClientSms(clientId: number): Promise<any[]> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
-    const smsNumbers = await scrapingClient.clientSms.findMany({
+    // Get verified ClientSms records
+    const verifiedSms = await scrapingClient.clientSms.findMany({
       where: { clientId },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         phoneNumber: true,
         status: true,
+        ...({
+          verificationStatus: true,
+          verificationMethod: true,
+          verifiedAt: true,
+          lastOtpSentAt: true,
+        } as any),
         currentCounter: true,
         totalCounter: true,
         limit: true,
@@ -538,21 +564,91 @@ export class SmsService {
       },
     });
 
-    return smsNumbers;
+    // Get pending verifications (no ClientSms record yet)
+    // Note: This requires the migration that adds emailAddress/phoneNumber to SenderVerification
+    let pendingVerifications: any[] = [];
+    try {
+      // Check if SenderVerification model exists and has phoneNumber column
+      const testQuery = await scrapingClient.$queryRaw<Array<{ exists: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'SenderVerification' 
+            AND column_name = 'phoneNumber'
+        ) as exists
+      `;
+      
+      if (testQuery[0]?.exists) {
+        // Column exists, use Prisma query
+        pendingVerifications = await (scrapingClient as any).senderVerification.findMany({
+          where: {
+            clientId,
+            senderType: 'sms',
+            status: 'pending',
+            clientSmsId: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            phoneNumber: true,
+            lastOtpSentAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      } else {
+        // Migration not applied - column doesn't exist
+        this.logger.warn('SenderVerification.phoneNumber column not found. Migration 20251125211530_add_temporary_verification_storage needs to be applied.');
+        pendingVerifications = [];
+      }
+    } catch (error: any) {
+      // If query fails for other reasons, log and return empty array
+      this.logger.warn('Error checking for phoneNumber column (returning empty pending verifications):', error?.message || error);
+      pendingVerifications = [];
+    }
+
+    // Transform pending verifications to match ClientSms structure
+    const pendingSms = pendingVerifications.map((v: any) => ({
+      id: null, // No ClientSms record yet
+      phoneNumber: v.phoneNumber,
+      status: 'inactive',
+      verificationStatus: 'pending',
+      verificationMethod: 'otp',
+      verifiedAt: null,
+      lastOtpSentAt: v.lastOtpSentAt,
+      currentCounter: 0,
+      totalCounter: 0,
+      limit: null,
+      createdAt: v.createdAt,
+      updatedAt: v.updatedAt,
+      verificationId: v.id, // Store verification ID for frontend
+    }));
+
+    // Combine and sort by creation date (newest first)
+    const allSms = [...verifiedSms, ...pendingSms].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return allSms;
   }
 
   /**
    * Create a new client SMS number
    */
-  async createClientSms(clientId: number, createDto: { phoneNumber: string; providerSettings?: string }): Promise<any> {
+  async createClientSms(
+    clientId: number,
+    createDto: { phoneNumber: string; providerSettings?: string; countryCode?: string },
+  ): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
     try {
-      // Check if phone number already exists for this client
+      const normalized = this.normalizePhoneNumber(createDto.phoneNumber, createDto.countryCode);
+
+      // Check if phone number already exists for this client (verified)
       const existing = await scrapingClient.clientSms.findFirst({
         where: {
           clientId,
-          phoneNumber: createDto.phoneNumber,
+          phoneNumber: normalized.e164,
         },
       });
 
@@ -560,33 +656,109 @@ export class SmsService {
         throw new BadRequestException('Phone number already exists for this client');
       }
 
-      const clientSms = await scrapingClient.clientSms.create({
-        data: {
+      // Check if there's already a pending verification for this phone number
+      const existingVerification = await (scrapingClient as any).senderVerification.findFirst({
+        where: {
           clientId,
-          phoneNumber: createDto.phoneNumber,
-          providerSettings: createDto.providerSettings,
-          status: 'active',
-          limit: null, // No limit by default
-          currentCounter: 0,
-          totalCounter: 0,
-        },
-        select: {
-          id: true,
-          phoneNumber: true,
-          status: true,
-          currentCounter: true,
-          totalCounter: true,
-          limit: true,
-          createdAt: true,
-          updatedAt: true,
+          phoneNumber: normalized.e164,
+          status: 'pending',
+          senderType: 'sms',
         },
       });
 
-      this.logger.log(`✅ Created client SMS ${clientSms.id} for client ${clientId}`);
+      if (existingVerification) {
+        // Resend OTP for existing pending verification
+        await this.sendSmsVerificationOtpForPending(clientId, existingVerification.id, true);
+        
+        return {
+          id: null, // No ClientSms record yet
+          phoneNumber: normalized.e164,
+          status: 'inactive',
+          verificationStatus: 'pending',
+          verificationMethod: 'otp',
+          verifiedAt: null,
+          lastOtpSentAt: existingVerification.lastOtpSentAt,
+          currentCounter: 0,
+          totalCounter: 0,
+          limit: null,
+          createdAt: existingVerification.createdAt,
+          updatedAt: existingVerification.updatedAt,
+          verificationId: existingVerification.id, // Store verification ID for frontend
+        };
+      }
 
-      return clientSms;
-    } catch (error) {
-      // Handle Prisma unique constraint errors
+      // Create temporary verification record and send OTP (NO ClientSms record yet)
+      const code = this.otpService.generateCode();
+      const hash = this.otpService.hashCode(code);
+      const expiresAt = this.otpService.getExpiry();
+      const now = new Date();
+
+      const verification = await (scrapingClient as any).senderVerification.create({
+        data: {
+          senderType: 'sms',
+          clientId,
+          phoneNumber: normalized.e164,
+          otpHash: hash,
+          otpExpiresAt: expiresAt,
+          attemptCount: 0,
+          status: 'pending',
+          verificationMethod: 'otp',
+          lastOtpSentAt: now,
+        },
+      });
+
+      // Send OTP via SMS
+      try {
+        await this.twilioService.sendSms({
+          to: normalized.e164,
+          body: `Your verification code is ${code}. It expires in 10 minutes.`,
+        });
+
+        this.otpService.logSend('sms', this.otpService.maskTarget(normalized.e164), expiresAt);
+      } catch (error: any) {
+        this.logger.error(`Failed to send OTP via Twilio: ${error.message || error}`);
+        
+        // Clean up the verification record if SMS sending failed
+        try {
+          await (scrapingClient as any).senderVerification.deleteMany({
+            where: { id: verification.id },
+          });
+        } catch (cleanupError) {
+          this.logger.warn(`Failed to cleanup verification record: ${cleanupError}`);
+        }
+
+        // Provide user-friendly error messages
+        if (error.message?.includes('credentials') || error.message?.includes('authentication')) {
+          throw new BadRequestException('SMS service is not properly configured. Please contact support.');
+        }
+        if (error.message?.includes('Invalid') || error.message?.includes('phone number')) {
+          throw new BadRequestException(`Invalid phone number format: ${normalized.e164}. Please check the number and try again.`);
+        }
+        if (error.message?.includes('from') || error.message?.includes('sender')) {
+          throw new BadRequestException('SMS sender number is not configured. Please contact support.');
+        }
+        
+        throw new BadRequestException(`Failed to send verification code: ${error.message || 'Unknown error'}. Please try again.`);
+      }
+
+      // Return temporary structure (no ClientSms record yet)
+      return {
+        id: null, // No ClientSms record yet
+        phoneNumber: normalized.e164,
+        status: 'inactive',
+        verificationStatus: 'pending',
+        verificationMethod: 'otp',
+        verifiedAt: null,
+        lastOtpSentAt: now,
+        currentCounter: 0,
+        totalCounter: 0,
+        limit: null,
+        createdAt: now,
+        updatedAt: now,
+        verificationId: verification.id, // Store verification ID for frontend
+      };
+    } catch (error: any) {
+      // Re-throw BadRequestException to preserve the original error message
       if (error instanceof BadRequestException) {
         throw error;
       }
@@ -602,8 +774,18 @@ export class SmsService {
         }
       }
       
-      this.logger.error(`Failed to create client SMS: ${error}`);
-      throw new BadRequestException('Failed to create phone number. Please try again.');
+      // Check if it's a phone number validation error
+      if (error?.message?.includes('phone number') || error?.message?.includes('Phone number')) {
+        throw new BadRequestException(error.message);
+      }
+      
+      // Check if it's a Twilio/SMS configuration error
+      if (error?.message?.includes('Twilio') || error?.message?.includes('SMS service') || error?.message?.includes('sender')) {
+        throw new BadRequestException(error.message);
+      }
+      
+      this.logger.error(`Failed to create client SMS: ${error?.message || error}`);
+      throw new BadRequestException(error?.message || 'Failed to create phone number. Please try again.');
     }
   }
 
@@ -640,5 +822,571 @@ export class SmsService {
     });
 
     this.logger.log(`✅ Deleted client SMS ${id} for client ${clientId}`);
+  }
+
+  async requestSmsOtp(clientId: number, identifier: number | { verificationId: number }) {
+    // Support both old flow (clientSmsId) and new flow (verificationId)
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      return this.sendSmsVerificationOtpForPending(clientId, identifier.verificationId);
+    }
+    // Old flow: clientSmsId (backward compatibility)
+    return this.sendSmsVerificationOtp(clientId, identifier as number);
+  }
+
+  async verifySmsOtp(clientId: number, identifier: number | { verificationId: number }, code: string) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    let verification: any;
+    let phoneNumber: string;
+    let providerSettings: string | undefined;
+
+    // Support both old flow (clientSmsId) and new flow (verificationId)
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      // New flow: Verify by verificationId (no ClientSms exists yet)
+      verification = await (scrapingClient as any).senderVerification.findUnique({
+        where: { id: identifier.verificationId },
+      });
+
+      if (!verification || verification.clientId !== clientId) {
+        throw new NotFoundException('Verification not found for this client.');
+      }
+
+      if (verification.senderType !== 'sms') {
+        throw new BadRequestException('Invalid verification type.');
+      }
+
+      if (!verification.phoneNumber) {
+        throw new BadRequestException('Phone number not found in verification record.');
+      }
+
+      phoneNumber = verification.phoneNumber;
+      // Provider settings would need to be passed separately or stored in verification
+      // For now, we'll use undefined and let it be set later if needed
+    } else {
+      // Old flow: Verify by clientSmsId (backward compatibility)
+      const clientSmsId = identifier as number;
+      const clientSms = await scrapingClient.clientSms.findUnique({
+        where: { id: clientSmsId },
+      });
+
+      if (!clientSms || clientSms.clientId !== clientId) {
+        throw new NotFoundException('Phone number not found for this client.');
+      }
+
+      const verificationStatus = (clientSms as any).verificationStatus;
+      if (verificationStatus === 'verified') {
+        return {
+          success: true,
+          message: 'Phone number already verified.',
+        };
+      }
+
+      verification = await (scrapingClient as any).senderVerification.findUnique({
+        where: { clientSmsId: clientSmsId },
+      });
+
+      if (!verification) {
+        throw new BadRequestException('No OTP found for this phone number. Request a new code.');
+      }
+
+      phoneNumber = clientSms.phoneNumber;
+      providerSettings = clientSms.providerSettings || undefined;
+    }
+
+    // Common verification logic
+    if (verification.status === 'rejected') {
+      throw new BadRequestException('Maximum attempts exceeded. Request a new code.');
+    }
+
+    if (verification.status === 'verified') {
+      // If already verified and ClientSms exists, just return success
+      if (typeof identifier === 'number') {
+        const clientSms = await scrapingClient.clientSms.findUnique({
+          where: { id: identifier },
+        });
+        if (clientSms) {
+          await scrapingClient.clientSms.update({
+            where: { id: identifier },
+            data: {
+              ...({
+                verificationStatus: 'verified',
+                verifiedAt: verification.verifiedAt || new Date(),
+              } as any),
+              status: 'active',
+            },
+          });
+        }
+      }
+      return {
+        success: true,
+        message: 'Phone number verified.',
+      };
+    }
+
+    if (this.otpService.isExpired(verification.otpExpiresAt)) {
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: { status: 'expired' },
+      });
+      throw new BadRequestException('OTP expired. Request a new code.');
+    }
+
+    const hashed = this.otpService.hashCode(code);
+    if (hashed !== verification.otpHash) {
+      const attempts = verification.attemptCount + 1;
+      const status: SenderVerificationStatus =
+        attempts >= this.maxOtpAttempts ? 'rejected' : 'pending';
+
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: {
+          attemptCount: attempts,
+          status,
+        },
+      });
+
+      if (status === 'rejected') {
+        throw new BadRequestException('OTP invalid. Maximum attempts reached. Request a new code.');
+      }
+
+      throw new BadRequestException('Invalid OTP. Please try again.');
+    }
+
+    // OTP is valid - proceed with verification
+    const verifiedAt = new Date();
+    
+    // Update verification record
+    await (scrapingClient as any).senderVerification.update({
+      where: { id: verification.id },
+      data: {
+        status: 'verified',
+        verifiedAt,
+        attemptCount: verification.attemptCount + 1,
+      },
+    });
+
+    // Handle creation/update of ClientSms
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      // New flow: Create ClientSms record after verification
+      const clientSms = await scrapingClient.clientSms.create({
+        data: {
+          clientId,
+          phoneNumber,
+          providerSettings,
+          status: 'active',
+          ...({
+            verificationStatus: 'verified',
+            verificationMethod: 'otp',
+            verifiedAt,
+          } as any),
+          limit: null, // No limit by default
+          currentCounter: 0,
+          totalCounter: 0,
+        },
+        select: {
+          id: true,
+          phoneNumber: true,
+          status: true,
+          ...({
+            verificationStatus: true,
+            verificationMethod: true,
+            verifiedAt: true,
+            lastOtpSentAt: true,
+          } as any),
+          currentCounter: true,
+          totalCounter: true,
+          limit: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      // Link verification to ClientSms
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: { clientSmsId: clientSms.id },
+      });
+
+      this.logger.log(`📱 Phone ${phoneNumber} verified and ClientSms ${clientSms.id} created for client ${clientId}`);
+    } else {
+      // Old flow: Update existing ClientSms
+      const clientSmsId = identifier as number;
+      await scrapingClient.clientSms.update({
+        where: { id: clientSmsId },
+        data: {
+          ...({
+            verificationStatus: 'verified',
+            verifiedAt,
+          } as any),
+          status: 'active',
+        },
+      });
+
+      this.logger.log(`📱 Phone ${phoneNumber} verified for client ${clientId}`);
+    }
+
+    return {
+      success: true,
+      message: 'Phone number verified successfully.',
+    };
+  }
+
+  private async sendSmsVerificationOtpForPending(clientId: number, verificationId: number, bypassRateLimit = false) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const verification = await (scrapingClient as any).senderVerification.findUnique({
+      where: { id: verificationId },
+    });
+
+    if (!verification || verification.clientId !== clientId) {
+      throw new NotFoundException('Verification not found for this client.');
+    }
+
+    if (verification.senderType !== 'sms') {
+      throw new BadRequestException('Invalid verification type.');
+    }
+
+    if (verification.status === 'verified') {
+      return {
+        success: true,
+        message: 'Phone number already verified.',
+      };
+    }
+
+    if (!verification.phoneNumber) {
+      throw new BadRequestException('Phone number not found in verification record.');
+    }
+
+    // Rate limiting check
+    if (
+      !bypassRateLimit &&
+      verification.lastOtpSentAt &&
+      Date.now() - verification.lastOtpSentAt.getTime() < this.otpResendIntervalMs
+    ) {
+      const waitSeconds = Math.ceil(
+        (this.otpResendIntervalMs - (Date.now() - verification.lastOtpSentAt.getTime())) / 1000,
+      );
+      throw new BadRequestException(`OTP already sent. Please wait ${waitSeconds}s before retrying.`);
+    }
+
+    const code = this.otpService.generateCode();
+    const hash = this.otpService.hashCode(code);
+    const expiresAt = this.otpService.getExpiry();
+    const now = new Date();
+
+    // Ensure phone number is in E.164 format
+    let phoneNumberE164: string = String(verification.phoneNumber || '');
+
+    // If phoneNumber doesn't start with +, normalize it
+    if (!phoneNumberE164.startsWith('+')) {
+      let normalized: { e164: string; countryCode: string; nationalNumber: string } | null = null;
+      const commonCountries = ['PK', 'US', 'GB', 'IN', 'CA', 'AU', 'DE', 'FR'];
+      
+      for (const country of commonCountries) {
+        try {
+          normalized = this.normalizePhoneNumber(phoneNumberE164, country);
+          if (normalized) {
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      
+      if (!normalized) {
+        try {
+          normalized = this.normalizePhoneNumber(phoneNumberE164);
+        } catch (error) {
+          throw new BadRequestException(
+            `Invalid phone number format. Please delete and re-add this number with the correct country code.`
+          );
+        }
+      }
+      
+      if (!normalized) {
+        throw new BadRequestException(
+          `Invalid phone number format. Please delete and re-add this number with the correct country code.`
+        );
+      }
+      
+      phoneNumberE164 = String(normalized.e164);
+    }
+
+    // Update verification record with new OTP
+    await (scrapingClient as any).senderVerification.update({
+      where: { id: verificationId },
+      data: {
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        lastOtpSentAt: now,
+        phoneNumber: phoneNumberE164, // Update to normalized format
+      },
+    });
+
+    // Send OTP via SMS
+    try {
+      await this.twilioService.sendSms({
+        to: phoneNumberE164,
+        body: `Your verification code is ${code}. It expires in 10 minutes.`,
+      });
+
+      this.otpService.logSend('sms', this.otpService.maskTarget(phoneNumberE164), expiresAt);
+    } catch (error: any) {
+      this.logger.error(`Failed to send OTP via Twilio: ${error.message || error}`);
+      
+      // Provide user-friendly error messages
+      if (error.message?.includes('credentials') || error.message?.includes('authentication')) {
+        throw new BadRequestException('SMS service is not properly configured. Please contact support.');
+      }
+      if (error.message?.includes('Invalid') || error.message?.includes('phone number')) {
+        throw new BadRequestException(`Invalid phone number format: ${phoneNumberE164}. Please check the number and try again.`);
+      }
+      if (error.message?.includes('from') || error.message?.includes('sender')) {
+        throw new BadRequestException('SMS sender number is not configured. Please contact support.');
+      }
+      
+      throw new BadRequestException(`Failed to send verification code: ${error.message || 'Unknown error'}. Please try again.`);
+    }
+
+    return {
+      success: true,
+      maskedTarget: this.otpService.maskTarget(phoneNumberE164),
+      expiresAt,
+    };
+  }
+
+  private async sendSmsVerificationOtp(clientId: number, clientSmsId: number, bypassRateLimit = false) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const clientSms = await scrapingClient.clientSms.findUnique({
+      where: { id: clientSmsId },
+      select: {
+        id: true,
+        clientId: true,
+        phoneNumber: true,
+        ...({
+          verificationStatus: true,
+          lastOtpSentAt: true,
+        } as any),
+      },
+    });
+
+    const clientSmsAny = clientSms as any;
+    if (!clientSms || clientSmsAny.clientId !== clientId) {
+      throw new NotFoundException('Phone number not found for this client.');
+    }
+
+    const verificationStatus = (clientSms as any).verificationStatus;
+    if (verificationStatus === 'verified') {
+      return {
+        success: true,
+        message: 'Phone number already verified.',
+      };
+    }
+
+    const lastOtpSentAt = (clientSms as any).lastOtpSentAt;
+    if (
+      !bypassRateLimit &&
+      lastOtpSentAt &&
+      Date.now() - lastOtpSentAt.getTime() < this.otpResendIntervalMs
+    ) {
+      const waitSeconds = Math.ceil(
+        (this.otpResendIntervalMs - (Date.now() - lastOtpSentAt.getTime())) / 1000,
+      );
+      throw new BadRequestException(`OTP already sent. Please wait ${waitSeconds}s before retrying.`);
+    }
+
+    // Ensure phone number is in E.164 format for Twilio
+    let phoneNumberE164: string = String(clientSms.phoneNumber || '');
+
+    // If phoneNumber doesn't start with +, normalize it
+    if (!phoneNumberE164.startsWith('+')) {
+      let normalized: { e164: string; countryCode: string; nationalNumber: string } | null = null;
+      const commonCountries = ['PK', 'US', 'GB', 'IN', 'CA', 'AU', 'DE', 'FR']; // Common countries
+      
+      // Try to normalize with common country codes
+      for (const country of commonCountries) {
+        try {
+          normalized = this.normalizePhoneNumber(phoneNumberE164, country);
+          if (normalized) {
+            break;
+          }
+        } catch {
+          // Try next country
+          continue;
+        }
+      }
+      
+      // If all common countries failed, try default (US)
+      if (!normalized) {
+        try {
+          normalized = this.normalizePhoneNumber(phoneNumberE164);
+        } catch (error) {
+          throw new BadRequestException(
+            `Invalid phone number format. Please delete and re-add this number with the correct country code. The number "${phoneNumberE164}" could not be automatically normalized.`
+          );
+        }
+      }
+      
+      if (!normalized) {
+        throw new BadRequestException(
+          `Invalid phone number format. Please delete and re-add this number with the correct country code.`
+        );
+      }
+      
+      phoneNumberE164 = String(normalized.e164);
+      
+      // Update the database with normalized E.164 format
+      await scrapingClient.clientSms.update({
+        where: { id: clientSmsId },
+        data: {
+          phoneNumber: phoneNumberE164,
+        },
+      });
+    }
+
+    const code = this.otpService.generateCode();
+    const hash = this.otpService.hashCode(code);
+    const expiresAt = this.otpService.getExpiry();
+    const now = new Date();
+
+    await (scrapingClient as any).senderVerification.upsert({
+      where: { clientSmsId: clientSmsId },
+      update: {
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        verificationMethod: 'otp',
+        senderType: 'sms' as SenderType,
+        lastOtpSentAt: now,
+        clientId, // Ensure clientId is set
+        phoneNumber: phoneNumberE164, // Store phone for audit
+      },
+      create: {
+        senderType: 'sms',
+        clientId,
+        clientSmsId,
+        phoneNumber: phoneNumberE164, // Store phone for audit
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        verificationMethod: 'otp',
+        lastOtpSentAt: now,
+      },
+    });
+
+    await scrapingClient.clientSms.update({
+      where: { id: clientSmsId },
+      data: {
+        ...({
+          verificationStatus: 'pending',
+          verificationMethod: 'otp',
+          lastOtpSentAt: now,
+        } as any),
+        status: 'inactive',
+      },
+    });
+
+    try {
+      await this.twilioService.sendSms({
+        to: phoneNumberE164,
+        body: `Your verification code is ${code}. It expires in 10 minutes.`,
+      });
+
+      this.otpService.logSend('sms', this.otpService.maskTarget(phoneNumberE164), expiresAt);
+
+      return {
+        success: true,
+        maskedTarget: this.otpService.maskTarget(phoneNumberE164),
+        expiresAt,
+      };
+    } catch (error: any) {
+      this.logger.error(`Failed to send OTP via Twilio: ${error.message || error}`);
+      
+      // Clean up the verification record if SMS sending failed
+      try {
+        await (scrapingClient as any).senderVerification.deleteMany({
+          where: { clientSmsId: clientSmsId },
+        });
+      } catch (cleanupError) {
+        this.logger.warn(`Failed to cleanup verification record: ${cleanupError}`);
+      }
+
+      // Provide user-friendly error messages
+      if (error.message?.includes('credentials') || error.message?.includes('authentication')) {
+        throw new BadRequestException('SMS service is not properly configured. Please contact support.');
+      }
+      if (error.message?.includes('Invalid') || error.message?.includes('phone number')) {
+        throw new BadRequestException(`Invalid phone number format: ${phoneNumberE164}. Please check the number and try again.`);
+      }
+      if (error.message?.includes('from') || error.message?.includes('sender')) {
+        throw new BadRequestException('SMS sender number is not configured. Please contact support.');
+      }
+      
+      throw new BadRequestException(`Failed to send verification code: ${error.message || 'Unknown error'}. Please try again.`);
+    }
+  }
+
+  private normalizePhoneNumber(rawInput: string, countryCode?: string) {
+    if (!rawInput || !rawInput.trim()) {
+      throw new BadRequestException('Phone number is required.');
+    }
+
+    const trimmed = rawInput.trim();
+    const normalizedCountry: CountryCode =
+      (countryCode?.toUpperCase() as CountryCode) ||
+      ((process.env.DEFAULT_PHONE_COUNTRY || 'US') as CountryCode);
+
+    const parserCountry =
+      trimmed.startsWith('+') || trimmed.startsWith('00')
+        ? undefined
+        : normalizedCountry;
+
+    const phoneNumber = parsePhoneNumberFromString(trimmed, parserCountry);
+    if (!phoneNumber || !phoneNumber.isValid()) {
+      throw new BadRequestException('Invalid phone number. Please enter a valid number with country code.');
+    }
+
+    if (phoneNumber.nationalNumber.length !== 10) {
+      throw new BadRequestException('Phone number must be 10 digits.');
+    }
+
+    return {
+      e164: phoneNumber.number,
+      countryCode: (phoneNumber.country || normalizedCountry) as string,
+      nationalNumber: phoneNumber.nationalNumber.toString(),
+    };
+  }
+
+  /**
+   * Parse a phone number in E.164 format to extract country code and national number
+   * Useful for UI display and validation
+   */
+  parsePhoneNumber(e164Number: string): {
+    e164: string;
+    countryCode: string;
+    nationalNumber: string;
+  } | null {
+    if (!e164Number || !e164Number.startsWith('+')) {
+      return null;
+    }
+
+    try {
+      const phoneNumber = parsePhoneNumberFromString(e164Number);
+      if (!phoneNumber || !phoneNumber.isValid()) {
+        return null;
+      }
+
+      return {
+        e164: phoneNumber.number,
+        countryCode: phoneNumber.country || '',
+        nationalNumber: phoneNumber.nationalNumber.toString(),
+      };
+    } catch (error) {
+      return null;
+    }
   }
 }

@@ -1,15 +1,26 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../config/prisma.service';
+
+// Temporary types until Prisma client is regenerated
+type SenderVerificationStatus = 'pending' | 'verified' | 'expired' | 'rejected';
+type SenderType = 'email' | 'sms';
 import { EmailGenerationService } from './generation/email-generation.service';
 import { SendGridService } from './delivery/sendgrid/sendgrid.service';
 import { InboxOptimizationService } from './optimization/inbox-optimization.service';
 import { UnsubscribeService } from './unsubscribe/unsubscribe.service';
 import { EmailTrackingService } from './tracking/email-tracking.service';
+import { ValidationService } from '../validation/validation.service';
+import { OtpService } from '../../common/services/otp.service';
 
 @Injectable()
 export class EmailsService {
   private readonly logger = new Logger(EmailsService.name);
+  private readonly otpResendIntervalMs = Number(process.env.SENDER_VERIFICATION_RESEND_SECONDS || '60') * 1000;
+  private readonly maxOtpAttempts = Number(process.env.SENDER_VERIFICATION_MAX_ATTEMPTS || '5');
+  private readonly verificationFromEmail = process.env.VERIFICATION_EMAIL_FROM || 'verify@bytesplatform.com';
+  private readonly verificationEmailSubject =
+    process.env.VERIFICATION_EMAIL_SUBJECT || 'Verify your sending email';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -18,6 +29,8 @@ export class EmailsService {
     private readonly optimizationService: InboxOptimizationService,
     private readonly unsubscribeService: UnsubscribeService,
     private readonly trackingService: EmailTrackingService,
+    private readonly validationService: ValidationService,
+    private readonly otpService: OtpService,
   ) {}
 
   /**
@@ -46,6 +59,11 @@ export class EmailsService {
 
       const contact = draft.contact;
       const clientEmail = draft.clientEmail;
+
+      const verificationStatus = (clientEmail as any).verificationStatus;
+      if (verificationStatus !== 'verified') {
+        throw new BadRequestException('Email address must be verified before sending.');
+      }
 
       // Check if contact is unsubscribed
       const isUnsubscribed = await this.unsubscribeService.isUnsubscribed(contact.id);
@@ -617,17 +635,25 @@ export class EmailsService {
 
   /**
    * Get all client emails for a specific client
+   * Includes both verified ClientEmail records and pending verifications
    */
   async getClientEmails(clientId: number): Promise<any[]> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
-    const emails = await scrapingClient.clientEmail.findMany({
+    // Get verified ClientEmail records
+    const verifiedEmails = await scrapingClient.clientEmail.findMany({
       where: { clientId },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         emailAddress: true,
         status: true,
+        ...({
+          verificationStatus: true,
+          verificationMethod: true,
+          verifiedAt: true,
+          lastOtpSentAt: true,
+        } as any),
         currentCounter: true,
         totalCounter: true,
         limit: true,
@@ -636,7 +662,72 @@ export class EmailsService {
       },
     });
 
-    return emails;
+    // Get pending verifications (no ClientEmail record yet)
+    // Note: This requires the migration that adds emailAddress/phoneNumber to SenderVerification
+    let pendingVerifications: any[] = [];
+    try {
+      // Check if SenderVerification model exists and has emailAddress column
+      const testQuery = await scrapingClient.$queryRaw<Array<{ exists: boolean }>>`
+        SELECT EXISTS (
+          SELECT 1 
+          FROM information_schema.columns 
+          WHERE table_name = 'SenderVerification' 
+            AND column_name = 'emailAddress'
+        ) as exists
+      `;
+      
+      if (testQuery[0]?.exists) {
+        // Column exists, use Prisma query
+        pendingVerifications = await (scrapingClient as any).senderVerification.findMany({
+          where: {
+            clientId,
+            senderType: 'email',
+            status: 'pending',
+            clientEmailId: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            emailAddress: true,
+            lastOtpSentAt: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+      } else {
+        // Migration not applied - column doesn't exist
+        this.logger.warn('SenderVerification.emailAddress column not found. Migration 20251125211530_add_temporary_verification_storage needs to be applied.');
+        pendingVerifications = [];
+      }
+    } catch (error: any) {
+      // If query fails for other reasons, log and return empty array
+      this.logger.warn('Error checking for emailAddress column (returning empty pending verifications):', error?.message || error);
+      pendingVerifications = [];
+    }
+
+    // Transform pending verifications to match ClientEmail structure
+    const pendingEmails = pendingVerifications.map((v: any) => ({
+      id: null, // No ClientEmail record yet
+      emailAddress: v.emailAddress,
+      status: 'inactive',
+      verificationStatus: 'pending',
+      verificationMethod: 'otp',
+      verifiedAt: null,
+      lastOtpSentAt: v.lastOtpSentAt,
+      currentCounter: 0,
+      totalCounter: 0,
+      limit: 500,
+      createdAt: v.createdAt,
+      updatedAt: v.updatedAt,
+      verificationId: v.id, // Store verification ID for frontend
+    }));
+
+    // Combine and sort by creation date (newest first)
+    const allEmails = [...verifiedEmails, ...pendingEmails].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return allEmails;
   }
 
   /**
@@ -646,7 +737,12 @@ export class EmailsService {
     const scrapingClient = await this.prisma.getScrapingClient();
 
     try {
-      // Check if email already exists for this client
+      const emailIsDeliverable = await this.validationService.validateEmail(createDto.emailAddress);
+      if (!emailIsDeliverable) {
+        throw new BadRequestException('Email domain is not accepting mail. Please use a valid mailbox.');
+      }
+
+      // Check if email already exists for this client (verified)
       const existing = await scrapingClient.clientEmail.findFirst({
         where: {
           clientId,
@@ -658,31 +754,90 @@ export class EmailsService {
         throw new BadRequestException('Email address already exists for this client');
       }
 
-      const clientEmail = await scrapingClient.clientEmail.create({
-        data: {
+      // Check if there's already a pending verification for this email
+      const existingVerification = await (scrapingClient as any).senderVerification.findFirst({
+        where: {
           clientId,
           emailAddress: createDto.emailAddress,
-          providerSettings: createDto.providerSettings,
-          status: 'active',
-          limit: 500,
-          currentCounter: 0,
-          totalCounter: 0,
-        },
-        select: {
-          id: true,
-          emailAddress: true,
-          status: true,
-          currentCounter: true,
-          totalCounter: true,
-          limit: true,
-          createdAt: true,
-          updatedAt: true,
+          status: 'pending',
+          senderType: 'email',
         },
       });
 
-      this.logger.log(`✅ Created client email ${clientEmail.id} for client ${clientId}`);
+      if (existingVerification) {
+        // Resend OTP for existing pending verification
+        await this.sendEmailVerificationOtpForPending(clientId, existingVerification.id, true);
+        
+        return {
+          id: null, // No ClientEmail record yet
+          emailAddress: createDto.emailAddress,
+          status: 'inactive',
+          verificationStatus: 'pending',
+          verificationMethod: 'otp',
+          verifiedAt: null,
+          lastOtpSentAt: existingVerification.lastOtpSentAt,
+          currentCounter: 0,
+          totalCounter: 0,
+          limit: 500,
+          createdAt: existingVerification.createdAt,
+          updatedAt: existingVerification.updatedAt,
+          verificationId: existingVerification.id, // Store verification ID for frontend
+        };
+      }
 
-      return clientEmail;
+      // Create temporary verification record and send OTP (NO ClientEmail record yet)
+      const code = this.otpService.generateCode();
+      const hash = this.otpService.hashCode(code);
+      const expiresAt = this.otpService.getExpiry();
+      const now = new Date();
+
+      const verification = await (scrapingClient as any).senderVerification.create({
+        data: {
+          senderType: 'email',
+          clientId,
+          emailAddress: createDto.emailAddress,
+          otpHash: hash,
+          otpExpiresAt: expiresAt,
+          attemptCount: 0,
+          status: 'pending',
+          verificationMethod: 'otp',
+          lastOtpSentAt: now,
+        },
+      });
+
+      // Send OTP email
+      const html = `
+        <p>Hi there,</p>
+        <p>Use the code below to verify <strong>${createDto.emailAddress}</strong> for sending emails.</p>
+        <p style="font-size: 24px; letter-spacing: 4px;"><strong>${code}</strong></p>
+        <p>This code expires in 10 minutes. If you did not request this, please ignore the email.</p>
+      `;
+
+      await this.sendGridService.sendEmail(
+        createDto.emailAddress,
+        this.verificationFromEmail,
+        this.verificationEmailSubject,
+        html,
+      );
+
+      this.otpService.logSend('email', this.otpService.maskTarget(createDto.emailAddress), expiresAt);
+
+      // Return temporary structure (no ClientEmail record yet)
+      return {
+        id: null, // No ClientEmail record yet
+        emailAddress: createDto.emailAddress,
+        status: 'inactive',
+        verificationStatus: 'pending',
+        verificationMethod: 'otp',
+        verifiedAt: null,
+        lastOtpSentAt: now,
+        currentCounter: 0,
+        totalCounter: 0,
+        limit: 500,
+        createdAt: now,
+        updatedAt: now,
+        verificationId: verification.id, // Store verification ID for frontend
+      };
     } catch (error) {
       // Handle Prisma unique constraint errors
       if (error instanceof BadRequestException) {
@@ -738,5 +893,391 @@ export class EmailsService {
     });
 
     this.logger.log(`✅ Deleted client email ${id} for client ${clientId}`);
+  }
+
+  async requestEmailOtp(clientId: number, identifier: number | { verificationId: number }) {
+    // Support both old flow (clientEmailId) and new flow (verificationId)
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      return this.sendEmailVerificationOtpForPending(clientId, identifier.verificationId);
+    }
+    // Old flow: clientEmailId (backward compatibility)
+    return this.sendEmailVerificationOtp(clientId, identifier as number);
+  }
+
+  async verifyEmailOtp(clientId: number, identifier: number | { verificationId: number }, code: string) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+    let verification: any;
+    let emailAddress: string;
+    let providerSettings: string | undefined;
+
+    // Support both old flow (clientEmailId) and new flow (verificationId)
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      // New flow: Verify by verificationId (no ClientEmail exists yet)
+      verification = await (scrapingClient as any).senderVerification.findUnique({
+        where: { id: identifier.verificationId },
+      });
+
+      if (!verification || verification.clientId !== clientId) {
+        throw new NotFoundException('Verification not found for this client.');
+      }
+
+      if (verification.senderType !== 'email') {
+        throw new BadRequestException('Invalid verification type.');
+      }
+
+      if (!verification.emailAddress) {
+        throw new BadRequestException('Email address not found in verification record.');
+      }
+
+      emailAddress = verification.emailAddress;
+      // Provider settings would need to be passed separately or stored in verification
+      // For now, we'll use undefined and let it be set later if needed
+    } else {
+      // Old flow: Verify by clientEmailId (backward compatibility)
+      const clientEmailId = identifier as number;
+      const clientEmail = await scrapingClient.clientEmail.findUnique({
+        where: { id: clientEmailId },
+        include: {
+          client: true,
+        },
+      });
+
+      if (!clientEmail || clientEmail.clientId !== clientId) {
+        throw new NotFoundException('Email address not found for this client.');
+      }
+
+      const verificationStatus = (clientEmail as any).verificationStatus;
+      if (verificationStatus === 'verified') {
+        return {
+          success: true,
+          message: 'Email already verified.',
+        };
+      }
+
+      verification = await (scrapingClient as any).senderVerification.findUnique({
+        where: { clientEmailId: clientEmailId },
+      });
+
+      if (!verification) {
+        throw new BadRequestException('No OTP found for this email. Please request a new code.');
+      }
+
+      emailAddress = clientEmail.emailAddress;
+      providerSettings = clientEmail.providerSettings || undefined;
+    }
+
+    // Common verification logic
+    if (verification.status === 'rejected') {
+      throw new BadRequestException('Maximum attempts exceeded. Please request a new OTP.');
+    }
+
+    if (verification.status === 'verified') {
+      // If already verified and ClientEmail exists, just return success
+      if (typeof identifier === 'number') {
+        const clientEmail = await scrapingClient.clientEmail.findUnique({
+          where: { id: identifier },
+        });
+        if (clientEmail) {
+          await scrapingClient.clientEmail.update({
+            where: { id: identifier },
+            data: {
+              ...({
+                verificationStatus: 'verified',
+                verifiedAt: verification.verifiedAt || new Date(),
+              } as any),
+              status: 'active',
+            },
+          });
+        }
+      }
+      return {
+        success: true,
+        message: 'Email verified.',
+      };
+    }
+
+    if (this.otpService.isExpired(verification.otpExpiresAt)) {
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: { status: 'expired' },
+      });
+      throw new BadRequestException('OTP has expired. Please request a new code.');
+    }
+
+    const hashed = this.otpService.hashCode(code);
+    if (hashed !== verification.otpHash) {
+      const attempts = verification.attemptCount + 1;
+      const status: SenderVerificationStatus =
+        attempts >= this.maxOtpAttempts ? 'rejected' : 'pending';
+
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: {
+          attemptCount: attempts,
+          status,
+        },
+      });
+
+      if (status === 'rejected') {
+        throw new BadRequestException('OTP invalid. Maximum attempts reached. Request a new code.');
+      }
+
+      throw new BadRequestException('Invalid OTP. Please try again.');
+    }
+
+    // OTP is valid - proceed with verification
+    const verifiedAt = new Date();
+    
+    // Update verification record
+    await (scrapingClient as any).senderVerification.update({
+      where: { id: verification.id },
+      data: {
+        status: 'verified',
+        verifiedAt,
+        attemptCount: verification.attemptCount + 1,
+      },
+    });
+
+    // Handle creation/update of ClientEmail
+    if (typeof identifier === 'object' && identifier.verificationId) {
+      // New flow: Create ClientEmail record after verification
+      const clientEmail = await scrapingClient.clientEmail.create({
+        data: {
+          clientId,
+          emailAddress,
+          providerSettings,
+          status: 'active',
+          ...({
+            verificationStatus: 'verified',
+            verificationMethod: 'otp',
+            verifiedAt,
+          } as any),
+          limit: 500,
+          currentCounter: 0,
+          totalCounter: 0,
+        },
+        select: {
+          id: true,
+          emailAddress: true,
+          status: true,
+          ...({
+            verificationStatus: true,
+            verificationMethod: true,
+            verifiedAt: true,
+            lastOtpSentAt: true,
+          } as any),
+          currentCounter: true,
+          totalCounter: true,
+          limit: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      // Link verification to ClientEmail
+      await (scrapingClient as any).senderVerification.update({
+        where: { id: verification.id },
+        data: { clientEmailId: clientEmail.id },
+      });
+
+      this.logger.log(`📧 Email ${emailAddress} verified and ClientEmail ${clientEmail.id} created for client ${clientId}`);
+    } else {
+      // Old flow: Update existing ClientEmail
+      const clientEmailId = identifier as number;
+      await scrapingClient.clientEmail.update({
+        where: { id: clientEmailId },
+        data: {
+          ...({
+            verificationStatus: 'verified',
+            verifiedAt,
+          } as any),
+          status: 'active',
+        },
+      });
+
+      this.logger.log(`📧 Email ${emailAddress} verified for client ${clientId}`);
+    }
+
+    return {
+      success: true,
+      message: 'Email verified successfully.',
+    };
+  }
+
+  private async sendEmailVerificationOtpForPending(clientId: number, verificationId: number, bypassRateLimit = false) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const verification = await (scrapingClient as any).senderVerification.findUnique({
+      where: { id: verificationId },
+    });
+
+    if (!verification || verification.clientId !== clientId) {
+      throw new NotFoundException('Verification not found for this client.');
+    }
+
+    if (verification.senderType !== 'email') {
+      throw new BadRequestException('Invalid verification type.');
+    }
+
+    if (verification.status === 'verified') {
+      return {
+        success: true,
+        message: 'Email already verified.',
+      };
+    }
+
+    if (!verification.emailAddress) {
+      throw new BadRequestException('Email address not found in verification record.');
+    }
+
+    // Rate limiting check
+    if (
+      !bypassRateLimit &&
+      verification.lastOtpSentAt &&
+      Date.now() - verification.lastOtpSentAt.getTime() < this.otpResendIntervalMs
+    ) {
+      const waitSeconds = Math.ceil(
+        (this.otpResendIntervalMs - (Date.now() - verification.lastOtpSentAt.getTime())) / 1000,
+      );
+      throw new BadRequestException(`OTP already sent. Please wait ${waitSeconds}s before retrying.`);
+    }
+
+    const code = this.otpService.generateCode();
+    const hash = this.otpService.hashCode(code);
+    const expiresAt = this.otpService.getExpiry();
+    const now = new Date();
+
+    // Update verification record with new OTP
+    await (scrapingClient as any).senderVerification.update({
+      where: { id: verificationId },
+      data: {
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        lastOtpSentAt: now,
+      },
+    });
+
+    // Send OTP email
+    const html = `
+      <p>Hi there,</p>
+      <p>Use the code below to verify <strong>${verification.emailAddress}</strong> for sending emails.</p>
+      <p style="font-size: 24px; letter-spacing: 4px;"><strong>${code}</strong></p>
+      <p>This code expires in 10 minutes. If you did not request this, please ignore the email.</p>
+    `;
+
+    await this.sendGridService.sendEmail(
+      verification.emailAddress,
+      this.verificationFromEmail,
+      this.verificationEmailSubject,
+      html,
+    );
+
+    this.otpService.logSend('email', this.otpService.maskTarget(verification.emailAddress), expiresAt);
+
+    return {
+      success: true,
+      maskedTarget: this.otpService.maskTarget(verification.emailAddress),
+      expiresAt,
+    };
+  }
+
+  private async sendEmailVerificationOtp(clientId: number, clientEmailId: number, bypassRateLimit = false) {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const clientEmail = await scrapingClient.clientEmail.findUnique({
+      where: { id: clientEmailId },
+    });
+
+    if (!clientEmail || clientEmail.clientId !== clientId) {
+      throw new NotFoundException('Email address not found for this client.');
+    }
+
+    const verificationStatus = (clientEmail as any).verificationStatus;
+    if (verificationStatus === 'verified') {
+      return {
+        success: true,
+        message: 'Email already verified.',
+      };
+    }
+
+    const lastOtpSentAt = (clientEmail as any).lastOtpSentAt;
+    if (
+      !bypassRateLimit &&
+      lastOtpSentAt &&
+      Date.now() - lastOtpSentAt.getTime() < this.otpResendIntervalMs
+    ) {
+      const waitSeconds = Math.ceil(
+        (this.otpResendIntervalMs - (Date.now() - lastOtpSentAt.getTime())) / 1000,
+      );
+      throw new BadRequestException(`OTP already sent. Please wait ${waitSeconds}s before retrying.`);
+    }
+
+    const code = this.otpService.generateCode();
+    const hash = this.otpService.hashCode(code);
+    const expiresAt = this.otpService.getExpiry();
+    const now = new Date();
+
+    await (scrapingClient as any).senderVerification.upsert({
+      where: { clientEmailId: clientEmailId },
+      update: {
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        verificationMethod: 'otp',
+        senderType: 'email' as SenderType,
+        lastOtpSentAt: now,
+        clientId, // Ensure clientId is set
+        emailAddress: clientEmail.emailAddress, // Store email for audit
+      },
+      create: {
+        senderType: 'email',
+        clientId,
+        clientEmailId,
+        emailAddress: clientEmail.emailAddress, // Store email for audit
+        otpHash: hash,
+        otpExpiresAt: expiresAt,
+        attemptCount: 0,
+        status: 'pending',
+        verificationMethod: 'otp',
+        lastOtpSentAt: now,
+      },
+    });
+
+    await scrapingClient.clientEmail.update({
+      where: { id: clientEmailId },
+      data: {
+        ...({
+          verificationStatus: 'pending',
+          verificationMethod: 'otp',
+          lastOtpSentAt: now,
+        } as any),
+        status: 'inactive',
+      },
+    });
+
+    const html = `
+      <p>Hi there,</p>
+      <p>Use the code below to verify <strong>${clientEmail.emailAddress}</strong> for sending emails.</p>
+      <p style="font-size: 24px; letter-spacing: 4px;"><strong>${code}</strong></p>
+      <p>This code expires in 10 minutes. If you did not request this, please ignore the email.</p>
+    `;
+
+    await this.sendGridService.sendEmail(
+      clientEmail.emailAddress,
+      this.verificationFromEmail,
+      this.verificationEmailSubject,
+      html,
+    );
+
+    this.otpService.logSend('email', this.otpService.maskTarget(clientEmail.emailAddress), expiresAt);
+
+    return {
+      success: true,
+      maskedTarget: this.otpService.maskTarget(clientEmail.emailAddress),
+      expiresAt,
+    };
   }
 }

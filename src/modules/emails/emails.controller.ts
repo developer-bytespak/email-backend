@@ -14,9 +14,10 @@ import {
   UnauthorizedException,
   Request,
 } from '@nestjs/common';
-import { IsNumber, IsOptional, IsString, IsArray, IsIn, IsEmail } from 'class-validator';
+import { IsNumber, IsOptional, IsString, IsArray, IsIn, IsEmail, Length } from 'class-validator';
 import { EmailsService } from './emails.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PrismaService } from '../../config/prisma.service';
 
 export class SendEmailDraftDto {
   @IsNumber()
@@ -52,9 +53,18 @@ export class CreateClientEmailDto {
   providerSettings?: string;
 }
 
+export class VerifyEmailOtpDto {
+  @IsString()
+  @Length(4, 10)
+  code: string;
+}
+
 @Controller('emails')
 export class EmailsController {
-  constructor(private readonly emailsService: EmailsService) {}
+  constructor(
+    private readonly emailsService: EmailsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   /**
    * Send an email draft
@@ -266,6 +276,88 @@ export class EmailsController {
     } catch (error) {
       throw new HttpException(
         error.message || 'Failed to create client email',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('client-emails/:id/request-otp')
+  async requestEmailOtp(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      // Try to determine if this is a clientEmailId or verificationId
+      // First check if it's a ClientEmail, otherwise treat as verificationId
+      const scrapingClient = await this.prisma.getScrapingClient();
+      const clientEmail = await scrapingClient.clientEmail.findUnique({
+        where: { id },
+      });
+
+      let identifier: number | { verificationId: number };
+      if (clientEmail && clientEmail.clientId === clientId) {
+        // Old flow: clientEmailId exists
+        identifier = id;
+      } else {
+        // New flow: treat as verificationId
+        identifier = { verificationId: id };
+      }
+
+      const result = await this.emailsService.requestEmailOtp(clientId, identifier);
+      return {
+        message: 'Verification code sent.',
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to send verification code',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('client-emails/:id/verify-otp')
+  async verifyEmailOtp(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() verifyDto: VerifyEmailOtpDto,
+  ) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      // Try to determine if this is a clientEmailId or verificationId
+      // First check if it's a ClientEmail, otherwise treat as verificationId
+      const scrapingClient = await this.prisma.getScrapingClient();
+      const clientEmail = await scrapingClient.clientEmail.findUnique({
+        where: { id },
+      });
+
+      let identifier: number | { verificationId: number };
+      if (clientEmail && clientEmail.clientId === clientId) {
+        // Old flow: clientEmailId exists
+        identifier = id;
+      } else {
+        // New flow: treat as verificationId
+        identifier = { verificationId: id };
+      }
+
+      const result = await this.emailsService.verifyEmailOtp(clientId, identifier, verifyDto.code);
+      return {
+        message: result.message || 'Email verified successfully',
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to verify email',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

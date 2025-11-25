@@ -10,24 +10,25 @@ generator client {
 }
 
 model Client {
-  id           Int              @id @default(autoincrement())
-  name         String
-  email        String           @unique
-  phone        String
-  city         String
-  country      String
-  address      String
-  hashPassword String
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @default(now()) @updatedAt
-  csvUploads   CsvUpload[]
-  emailDrafts  EmailDraft[]
-  emailLogs    EmailLog[]
-  products     ProductService[]
-  clientEmails ClientEmail[]
-  clientSms    ClientSms[]
-  smsDrafts    SmsDraft[]
-  smsLogs      SmsLog[]
+  id                  Int                  @id @default(autoincrement())
+  name                String
+  email               String               @unique
+  phone               String
+  city                String
+  country             String
+  address             String
+  hashPassword        String
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @default(now()) @updatedAt
+  csvUploads          CsvUpload[]
+  emailDrafts         EmailDraft[]
+  emailLogs           EmailLog[]
+  products            ProductService[]
+  clientEmails        ClientEmail[]
+  clientSms           ClientSms[]
+  smsDrafts           SmsDraft[]
+  smsLogs             SmsLog[]
+  senderVerifications SenderVerification[]
 }
 
 model CsvUpload {
@@ -224,24 +225,29 @@ enum ProductServiceType {
 }
 
 model ClientEmail {
-  id               Int               @id @default(autoincrement())
-  clientId         Int
-  emailAddress     String
-  providerSettings String?
-  status           ClientEmailStatus @default(active)
-  mailerTestScore  Decimal?          @db.Decimal(5, 2)
-  totalCounter     Int               @default(0)
-  currentCounter   Int               @default(0)
-  timestamp        DateTime?
-  limit            Int               @default(100)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @default(now()) @updatedAt
+  id                 Int                      @id @default(autoincrement())
+  clientId           Int
+  emailAddress       String
+  providerSettings   String?
+  status             ClientEmailStatus        @default(active)
+  verificationStatus SenderVerificationStatus @default(pending)
+  verificationMethod VerificationMethod       @default(otp)
+  verifiedAt         DateTime?
+  lastOtpSentAt      DateTime?
+  mailerTestScore    Decimal?                 @db.Decimal(5, 2)
+  totalCounter       Int                      @default(0)
+  currentCounter     Int                      @default(0)
+  timestamp          DateTime?
+  limit              Int                      @default(100)
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @default(now()) @updatedAt
 
   // NEW FIELDS:
   sendgridApiKey String? // Encrypted SendGrid API key (per email account)
 
-  client     Client       @relation(fields: [clientId], references: [id])
-  EmailDraft EmailDraft[]
+  client              Client               @relation(fields: [clientId], references: [id])
+  EmailDraft          EmailDraft[]
+  senderVerifications SenderVerification[]
 }
 
 enum ClientEmailStatus {
@@ -250,21 +256,26 @@ enum ClientEmailStatus {
 }
 
 model ClientSms {
-  id               Int             @id @default(autoincrement())
-  clientId         Int
-  phoneNumber      String
-  providerSettings String?
-  status           ClientSmsStatus @default(active)
-  totalCounter     Int             @default(0)
-  currentCounter   Int             @default(0)
-  timestamp        DateTime?
-  limit            Int? // Optional - null means no limit enforcement
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @default(now()) @updatedAt
+  id                 Int                      @id @default(autoincrement())
+  clientId           Int
+  phoneNumber        String
+  providerSettings   String?
+  status             ClientSmsStatus          @default(active)
+  verificationStatus SenderVerificationStatus @default(pending)
+  verificationMethod VerificationMethod       @default(otp)
+  verifiedAt         DateTime?
+  lastOtpSentAt      DateTime?
+  totalCounter       Int                      @default(0)
+  currentCounter     Int                      @default(0)
+  timestamp          DateTime?
+  limit              Int? // Optional - null means no limit enforcement
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @default(now()) @updatedAt
 
-  client    Client     @relation(fields: [clientId], references: [id])
-  smsDrafts SmsDraft[]
-  smsLogs   SmsLog[]
+  client              Client               @relation(fields: [clientId], references: [id])
+  smsDrafts           SmsDraft[]
+  smsLogs             SmsLog[]
+  senderVerifications SenderVerification[]
 }
 
 enum ClientSmsStatus {
@@ -384,6 +395,50 @@ model EmailEngagement {
 enum EngagementType {
   open // Created when tracking pixel loads or SendGrid webhook
   click // Created when link is clicked or SendGrid webhook
+}
+
+model SenderVerification {
+  id                 Int                      @id @default(autoincrement())
+  senderType         SenderType
+  clientId           Int // Store clientId for temporary verifications
+  clientEmailId      Int?
+  clientSmsId        Int?
+  emailAddress       String? // Temporary storage before ClientEmail is created
+  phoneNumber        String? // Temporary storage before ClientSms is created
+  otpHash            String
+  otpExpiresAt       DateTime
+  attemptCount       Int                      @default(0)
+  status             SenderVerificationStatus @default(pending)
+  verificationMethod VerificationMethod       @default(otp)
+  verifiedAt         DateTime?
+  lastOtpSentAt      DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @default(now()) @updatedAt
+
+  client      Client       @relation(fields: [clientId], references: [id])
+  clientEmail ClientEmail? @relation(fields: [clientEmailId], references: [id])
+  clientSms   ClientSms?   @relation(fields: [clientSmsId], references: [id])
+
+  @@unique([clientEmailId], map: "senderVerification_clientEmailId_key")
+  @@unique([clientSmsId], map: "senderVerification_clientSmsId_key")
+  @@index([clientId, emailAddress, status]) // For finding pending email verifications
+  @@index([clientId, phoneNumber, status]) // For finding pending SMS verifications
+}
+
+enum SenderType {
+  email
+  sms
+}
+
+enum SenderVerificationStatus {
+  pending
+  verified
+  expired
+  rejected
+}
+
+enum VerificationMethod {
+  otp
 }
 
 model EmailUnsubscribe {

@@ -10,6 +10,8 @@ import { EmailSchedulerModule } from './scheduling/email-scheduler.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { EmailAnalyticsModule } from './analytics/email-analytics.module';
 import { QueueRealtimeModule } from './realtime/queue-realtime.module';
+import { ValidationModule } from '../validation/validation.module';
+import { OtpService } from '../../common/services/otp.service';
 
 @Module({
   imports: [
@@ -22,9 +24,10 @@ import { QueueRealtimeModule } from './realtime/queue-realtime.module';
     WebhooksModule,
     EmailAnalyticsModule,
     QueueRealtimeModule,
+    ValidationModule,
   ],
   controllers: [EmailsController],
-  providers: [EmailsService],
+  providers: [EmailsService, OtpService],
   exports: [EmailsService],
 })
 export class EmailsModule {}
