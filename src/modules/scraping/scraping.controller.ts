@@ -14,12 +14,34 @@ import {
     constructor(private readonly scrapingService: ScrapingService) {}
   
     /**
+     * Discover website URL for a contact (business search only, no scraping)
+     * POST /scraping/discover-website/:contactId
+     */
+    @Post('discover-website/:contactId')
+    async discoverWebsite(@Param('contactId', ParseIntPipe) contactId: number) {
+      const result = await this.scrapingService.discoverWebsite(contactId);
+      
+      return {
+        success: result.success,
+        data: result.data,
+        error: result.error,
+      };
+    }
+
+    /**
      * Scrape a single contact by ID
      * POST /scraping/scrape/:contactId
+     * Body (optional): { confirmedWebsite?: string }
      */
     @Post('scrape/:contactId')
-    async scrapeContact(@Param('contactId', ParseIntPipe) contactId: number) {
-      const result = await this.scrapingService.scrapeContact(contactId);
+    async scrapeContact(
+      @Param('contactId', ParseIntPipe) contactId: number,
+      @Body() body?: { confirmedWebsite?: string },
+    ) {
+      const result = await this.scrapingService.scrapeContact(
+        contactId,
+        body?.confirmedWebsite,
+      );
       
       return {
         message: result.success 
