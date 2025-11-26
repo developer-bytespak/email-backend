@@ -388,4 +388,30 @@ export class EmailsController {
       );
     }
   }
+
+  /**
+   * Delete a pending email verification
+   * DELETE /emails/pending-verifications/:verificationId
+   */
+  @UseGuards(JwtAuthGuard)
+  @Delete('pending-verifications/:verificationId')
+  async deletePendingEmailVerification(@Request() req, @Param('verificationId', ParseIntPipe) verificationId: number) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      await this.emailsService.deletePendingEmailVerification(clientId, verificationId);
+      return {
+        message: 'Pending email verification deleted successfully',
+        success: true,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to delete pending verification',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

@@ -264,4 +264,30 @@ export class SmsController {
       );
     }
   }
+
+  /**
+   * Delete a pending SMS verification
+   * DELETE /sms/pending-verifications/:verificationId
+   */
+  @UseGuards(JwtAuthGuard)
+  @Delete('pending-verifications/:verificationId')
+  async deletePendingSmsVerification(@Request() req, @Param('verificationId', ParseIntPipe) verificationId: number) {
+    const clientId = req.user?.id;
+    if (!clientId) {
+      throw new UnauthorizedException('Client authentication required');
+    }
+
+    try {
+      await this.smsService.deletePendingSmsVerification(clientId, verificationId);
+      return {
+        message: 'Pending SMS verification deleted successfully',
+        success: true,
+      };
+    } catch (error) {
+      throw new HttpException(
+        error.message || 'Failed to delete pending verification',
+        error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }

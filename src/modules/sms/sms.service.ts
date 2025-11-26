@@ -568,42 +568,34 @@ export class SmsService {
     // Note: This requires the migration that adds emailAddress/phoneNumber to SenderVerification
     let pendingVerifications: any[] = [];
     try {
-      // Check if SenderVerification model exists and has phoneNumber column
-      const testQuery = await scrapingClient.$queryRaw<Array<{ exists: boolean }>>`
-        SELECT EXISTS (
-          SELECT 1 
-          FROM information_schema.columns 
-          WHERE table_name = 'SenderVerification' 
-            AND column_name = 'phoneNumber'
-        ) as exists
-      `;
-      
-      if (testQuery[0]?.exists) {
-        // Column exists, use Prisma query
-        pendingVerifications = await (scrapingClient as any).senderVerification.findMany({
-          where: {
-            clientId,
-            senderType: 'sms',
-            status: 'pending',
-            clientSmsId: null,
-          },
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            phoneNumber: true,
-            lastOtpSentAt: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-        });
-      } else {
-        // Migration not applied - column doesn't exist
-        this.logger.warn('SenderVerification.phoneNumber column not found. Migration 20251125211530_add_temporary_verification_storage needs to be applied.');
-        pendingVerifications = [];
-      }
+      // Try to query directly - if columns don't exist, Prisma will throw
+      pendingVerifications = await (scrapingClient as any).senderVerification.findMany({
+        where: {
+          clientId,
+          senderType: 'sms',
+          status: 'pending',
+          clientSmsId: null,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          phoneNumber: true,
+          lastOtpSentAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
     } catch (error: any) {
-      // If query fails for other reasons, log and return empty array
-      this.logger.warn('Error checking for phoneNumber column (returning empty pending verifications):', error?.message || error);
+      // Check if error is due to missing column
+      if (error?.message?.includes('phoneNumber') || 
+          error?.message?.includes('Unknown column') ||
+          error?.code === 'P2021' || // Table does not exist
+          error?.code === 'P2010') { // Column not found
+        this.logger.warn('SenderVerification.phoneNumber column not found. Migration 20251125211530_add_temporary_verification_storage needs to be applied.');
+      } else {
+        // Other errors - log but don't warn about migration
+        this.logger.debug('Error querying pending verifications:', error?.message || error);
+      }
       pendingVerifications = [];
     }
 
@@ -822,6 +814,43 @@ export class SmsService {
     });
 
     this.logger.log(`✅ Deleted client SMS ${id} for client ${clientId}`);
+  }
+
+  /**
+   * Delete a pending SMS verification (before ClientSms is created)
+   */
+  async deletePendingSmsVerification(clientId: number, verificationId: number): Promise<void> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    // Find the verification record
+    const verification = await (scrapingClient as any).senderVerification.findUnique({
+      where: { id: verificationId },
+    });
+
+    if (!verification) {
+      throw new NotFoundException(`Verification with ID ${verificationId} not found`);
+    }
+
+    // Verify it belongs to the client and is for SMS
+    if (verification.clientId !== clientId) {
+      throw new BadRequestException('You do not have permission to delete this verification');
+    }
+
+    if (verification.senderType !== 'sms') {
+      throw new BadRequestException('This verification is not for a phone number');
+    }
+
+    // Only allow deletion of pending, expired, or rejected verifications
+    if (verification.status === 'verified') {
+      throw new BadRequestException('Cannot delete verified phone number. Use the delete SMS endpoint instead.');
+    }
+
+    // Delete the verification record
+    await (scrapingClient as any).senderVerification.delete({
+      where: { id: verificationId },
+    });
+
+    this.logger.log(`✅ Deleted pending SMS verification ${verificationId} for client ${clientId}`);
   }
 
   async requestSmsOtp(clientId: number, identifier: number | { verificationId: number }) {
