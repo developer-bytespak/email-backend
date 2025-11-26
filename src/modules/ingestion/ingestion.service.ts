@@ -464,25 +464,40 @@ export class IngestionService {
 
   /**
    * Get all invalid contacts for a client (no pagination)
-   * Invalid = no email AND no phone
+   * Invalid contacts are those that meet ANY of these conditions:
+   * 1. No email AND no phone
+   * 2. Website is present but invalid (websiteValid === false)
    */
   async getAllInvalidContacts(clientId: number): Promise<ContactWithUpload[]> {
     const where: Prisma.ContactWhereInput = {
       csvUpload: {
         clientId,
       },
-      // Invalid contacts: no email AND no phone
-      AND: [
+      // Invalid contacts: (no email AND no phone) OR (website present but invalid)
+      OR: [
+        // Condition 1: No email AND no phone
         {
-          OR: [
-            { email: null },
-            { email: { equals: '' } },
+          AND: [
+            {
+              OR: [
+                { email: null },
+                { email: { equals: '' } },
+              ],
+            },
+            {
+              OR: [
+                { phone: null },
+                { phone: { equals: '' } },
+              ],
+            },
           ],
         },
+        // Condition 2: Website present but invalid
         {
-          OR: [
-            { phone: null },
-            { phone: { equals: '' } },
+          AND: [
+            { website: { not: null } },
+            { website: { not: { equals: '' } } },
+            { websiteValid: false },
           ],
         },
       ],
@@ -660,6 +675,7 @@ export class IngestionService {
 
     // Normalize the update payload
     const normalizedEmail = this.normalizeNullableField(dto.email);
+    const normalizedWebsite = this.normalizeNullableField(dto.website);
     const payload = this.normalizeContactUpdate(dto);
 
     // Update the contact fields first
@@ -668,19 +684,16 @@ export class IngestionService {
       data: payload,
     });
 
-    // If email was updated, validate it and update emailValid
-    // Note: We update emailValid but NOT valid/validationReason (those are managed by validation service)
-    if (normalizedEmail !== undefined) {
-      const emailValid = normalizedEmail
-        ? await this.validationService.validateEmail(normalizedEmail)
-        : false;
-
-      await this.prisma.contact.update({
-        where: { id: contactId },
-        data: {
-          emailValid,
-        },
-      });
+    // If email or website was updated, trigger full contact validation
+    // This validates website, email, business name, and updates all related fields:
+    // - emailValid, websiteValid, businessNameValid
+    // - valid, validationReason
+    // - scrapeMethod, scrapePriority
+    // - status
+    // Same comprehensive validation as after CSV upload
+    if (normalizedEmail !== undefined || normalizedWebsite !== undefined) {
+      // Trigger full contact validation (validates everything and updates all validation-related fields)
+      await this.validationService.validateContact(contactId);
     }
 
     // Get the updated contact with all relations
@@ -734,20 +747,30 @@ export class IngestionService {
 
   /**
    * Bulk delete all invalid contacts for a client
-   * Invalid = no email AND no phone
+   * Invalid contacts are those that meet ANY of these conditions:
+   * 1. No email AND no phone
+   * 2. Website is present but invalid (websiteValid === false)
    * Uses raw SQL for performance (single DELETE with JOIN)
    * Returns the count of deleted records
    */
   async bulkDeleteInvalidContacts(clientId: number): Promise<{ deletedCount: number }> {
     // First, count how many will be deleted
+    // Invalid contacts: (no email AND no phone) OR (website present but invalid)
     const countResult = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*) as count
       FROM "Contact" c
       INNER JOIN "CsvUpload" cu ON c."csvUploadId" = cu.id
       WHERE cu."clientId" = ${clientId}
         AND (
-          (c.email IS NULL OR c.email = '')
-          AND (c.phone IS NULL OR c.phone = '')
+          (
+            (c.email IS NULL OR c.email = '')
+            AND (c.phone IS NULL OR c.phone = '')
+          )
+          OR (
+            c.website IS NOT NULL
+            AND c.website != ''
+            AND c."websiteValid" = false
+          )
         )
     `;
 
@@ -765,8 +788,15 @@ export class IngestionService {
       WHERE c."csvUploadId" = cu.id
         AND cu."clientId" = ${clientId}
         AND (
-          (c.email IS NULL OR c.email = '')
-          AND (c.phone IS NULL OR c.phone = '')
+          (
+            (c.email IS NULL OR c.email = '')
+            AND (c.phone IS NULL OR c.phone = '')
+          )
+          OR (
+            c.website IS NOT NULL
+            AND c.website != ''
+            AND c."websiteValid" = false
+          )
         )
     `;
 
