@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import * as dns from 'dns';
 import { promisify } from 'util';
+import * as net from 'net';
 
 const resolveMx = promisify(dns.resolveMx);
 
@@ -120,8 +121,16 @@ export class ValidationService {
     }
 
     // Determine overall validity
-    // Contact is valid if ANY ONE of these is valid
-    const isValid = websiteValid || emailValid || businessNameValid;
+    // IMPORTANT: If website is provided but invalid, contact is invalid (force user to fix it)
+    // Otherwise, contact is valid if ANY ONE of these is valid
+    let isValid: boolean;
+    if (contact.website && !websiteValid) {
+      // Website provided but invalid - mark as invalid to force user to fix it
+      isValid = false;
+    } else {
+      // Contact is valid if ANY ONE of these is valid
+      isValid = websiteValid || emailValid || businessNameValid;
+    }
 
     // Determine scrape method and priority
     type ScrapeMethodType = 'direct_url' | 'email_domain' | 'business_search';
@@ -150,6 +159,7 @@ export class ValidationService {
       contact.website || '',
       contact.email || '',
       contact.businessName || '',
+      isValid,
     );
 
     // Update contact with all validation results
@@ -185,7 +195,13 @@ export class ValidationService {
     website: string,
     email: string,
     businessName: string,
+    isValid: boolean,
   ): string {
+    // If website is provided but invalid, that's the primary reason for invalidity
+    if (website && !websiteValid) {
+      return 'Website is unreachable - please update or remove the website URL';
+    }
+
     // If everything is invalid
     if (!websiteValid && !emailValid && !businessNameValid) {
       return 'All validation methods failed: no valid website, email, or business name';
@@ -232,7 +248,7 @@ export class ValidationService {
   }
 
   /**
-   * Validate email address
+   * Validate email address with syntax, MX records, and mailbox existence check
    */
   async validateEmail(email: string): Promise<boolean> {
     try {
@@ -251,22 +267,175 @@ export class ValidationService {
       }
 
       // 3. Check MX records (DNS lookup)
+      let mxRecords;
       try {
-        const mxRecords = await resolveMx(domain);
+        mxRecords = await resolveMx(domain);
         if (!mxRecords || mxRecords.length === 0) {
           this.logger.debug(`No MX records found for: ${domain}`);
           return false;
         }
-        this.logger.debug(`Email valid: ${email} (${mxRecords.length} MX records)`);
-        return true;
+        this.logger.debug(`MX records found for ${domain}: ${mxRecords.length} records`);
       } catch (error) {
         this.logger.debug(`MX lookup failed for ${domain}: ${error.message}`);
         return false;
+      }
+
+      // 4. Check if free email provider (skip SMTP handshake for these)
+      const isFreeEmail = this.freeEmailProviders.has(domain);
+      if (isFreeEmail) {
+        // Free providers often block SMTP verification, so we trust MX records
+        this.logger.debug(`Free email provider detected: ${domain}, skipping SMTP handshake`);
+        return true;
+      }
+
+      // 5. SMTP handshake to verify mailbox existence (for business domains only)
+      try {
+        const mailboxExists = await this.verifyMailboxExists(email, mxRecords);
+        if (mailboxExists) {
+          this.logger.debug(`Email mailbox verified: ${email}`);
+          return true;
+        } else {
+          this.logger.debug(`Email mailbox does not exist: ${email}`);
+          return false;
+        }
+      } catch (error) {
+        // If SMTP handshake fails, fall back to MX records only
+        this.logger.debug(`SMTP handshake failed for ${email}: ${error.message}, falling back to MX records`);
+        return true; // Trust MX records if SMTP fails (some servers block verification)
       }
     } catch (error) {
       this.logger.error(`Email validation error: ${error.message}`);
       return false;
     }
+  }
+
+  /**
+   * Verify mailbox existence using SMTP handshake (free method)
+   * Only works for servers that allow VRFY/RCPT TO verification
+   */
+  private async verifyMailboxExists(
+    email: string,
+    mxRecords: Array<{ exchange: string; priority: number }>,
+  ): Promise<boolean> {
+    // Sort MX records by priority (lower is better)
+    const sortedMx = [...mxRecords].sort((a, b) => a.priority - b.priority);
+    const [localPart, domain] = email.split('@');
+
+    // Try up to 3 MX servers (to avoid timeout issues)
+    const maxAttempts = Math.min(3, sortedMx.length);
+
+    for (let i = 0; i < maxAttempts; i++) {
+      const mxRecord = sortedMx[i];
+      const mxHost = mxRecord.exchange;
+
+      try {
+        const exists = await this.smtpHandshake(mxHost, email, localPart, domain);
+        if (exists !== null) {
+          // Got a definitive answer
+          return exists;
+        }
+        // If null, try next MX server
+      } catch (error) {
+        this.logger.debug(`SMTP handshake failed for ${mxHost}: ${error.message}`);
+        // Continue to next MX server
+      }
+    }
+
+    // If all attempts failed or returned null, assume valid (fallback to MX records)
+    return true;
+  }
+
+  /**
+   * Perform SMTP handshake to check mailbox existence
+   * Returns: true (exists), false (doesn't exist), null (indeterminate)
+   */
+  private async smtpHandshake(
+    mxHost: string,
+    email: string,
+    localPart: string,
+    domain: string,
+  ): Promise<boolean | null> {
+    return new Promise((resolve, reject) => {
+      const timeout = 8000; // 8 second timeout
+      const socket = new net.Socket();
+      let step = 0; // Track SMTP conversation step
+      let dataBuffer = '';
+
+      const timer = setTimeout(() => {
+        socket.destroy();
+        resolve(null); // Timeout = indeterminate
+      }, timeout);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        if (!socket.destroyed) {
+          socket.destroy();
+        }
+      };
+
+      socket.on('data', (data: Buffer) => {
+        dataBuffer += data.toString();
+        const lines = dataBuffer.split(/\r?\n/);
+        dataBuffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          const code = parseInt(line.substring(0, 3), 10);
+          if (isNaN(code)) continue;
+
+          // Step 0: Wait for greeting (220)
+          if (step === 0 && code === 220) {
+            step = 1;
+            socket.write(`HELO ${domain}\r\n`);
+          }
+          // Step 1: HELO response (250)
+          else if (step === 1 && code === 250) {
+            step = 2;
+            // Try RCPT TO directly (more reliable than VRFY)
+            socket.write(`MAIL FROM:<noreply@${domain}>\r\n`);
+          }
+          // Step 2: MAIL FROM response (250)
+          else if (step === 2 && code === 250) {
+            step = 3;
+            socket.write(`RCPT TO:<${email}>\r\n`);
+          }
+          // Step 3: RCPT TO response
+          else if (step === 3) {
+            if (code === 250) {
+              // Mailbox exists
+              cleanup();
+              resolve(true);
+              return;
+            } else if (code === 550 || code === 551 || code === 553) {
+              // Mailbox doesn't exist
+              cleanup();
+              resolve(false);
+              return;
+            } else {
+              // Other response (indeterminate)
+              cleanup();
+              resolve(null);
+              return;
+            }
+          }
+        }
+      });
+
+      socket.on('error', (error: Error) => {
+        cleanup();
+        resolve(null); // Network error = indeterminate
+      });
+
+      socket.on('close', () => {
+        cleanup();
+        // If we didn't get a definitive answer, it's indeterminate
+        resolve(null);
+      });
+
+      // Connect to SMTP server (port 25)
+      socket.connect(25, mxHost);
+    });
   }
 
   /**
