@@ -123,9 +123,119 @@ export class ScrapingService {
   }
 
   /**
+   * Discover website URL for a contact without scraping
+   * Only works for contacts with business_search method
+   */
+  async discoverWebsite(contactId: number): Promise<{
+    success: boolean;
+    data?: {
+      discoveredWebsite: string;
+      confidence: 'high' | 'medium' | 'low';
+      method: 'business_search';
+      businessName: string;
+      searchQuery: string;
+    };
+    error?: string;
+  }> {
+    try {
+      const scrapingClient = await this.prisma.getScrapingClient();
+      
+      const contact = await scrapingClient.contact.findUnique({
+        where: { id: contactId },
+      });
+
+      if (!contact) {
+        return {
+          success: false,
+          error: `Contact with ID ${contactId} not found`,
+        };
+      }
+
+      // Only allow discovery for business_search method
+      if (contact.scrapeMethod !== 'business_search') {
+        return {
+          success: false,
+          error: `Discovery only available for business_search method. Current method: ${contact.scrapeMethod}`,
+        };
+      }
+
+      // If contact already has a website, return it
+      if (contact.website) {
+        return {
+          success: true,
+          data: {
+            discoveredWebsite: contact.website,
+            confidence: 'high',
+            method: 'business_search',
+            businessName: contact.businessName || '',
+            searchQuery: '',
+          },
+        };
+      }
+
+      if (!contact.businessName) {
+        return {
+          success: false,
+          error: 'Business name required for website discovery',
+        };
+      }
+
+      // Build search query (same logic as scrapeFromBusinessSearch)
+      const searchTerms = [
+        contact.businessName,
+        contact.state,
+        contact.zipCode,
+      ].filter(Boolean);
+      const searchQuery = searchTerms.join(' ');
+
+      // Search for the business using Google (same as scrapeFromBusinessSearch)
+      const searchResults = await this.googleSearch.searchByBusinessName(
+        contact.businessName,
+        contact.state || undefined,
+        contact.zipCode || undefined
+      );
+
+      if (!searchResults.searchSuccess || !searchResults.results?.length) {
+        return {
+          success: false,
+          error: `No search results found for business: ${searchQuery}`,
+        };
+      }
+
+      // Get the first result URL
+      const discoveredUrl = searchResults.results[0].url;
+
+      // Determine confidence based on result quality
+      let confidence: 'high' | 'medium' | 'low' = 'medium';
+      if (searchResults.results.length >= 3) {
+        confidence = 'high';
+      } else if (searchResults.results.length === 1) {
+        confidence = 'low';
+      }
+
+      return {
+        success: true,
+        data: {
+          discoveredWebsite: discoveredUrl,
+          confidence,
+          method: 'business_search',
+          businessName: contact.businessName,
+          searchQuery,
+        },
+      };
+    } catch (error) {
+      console.error(`[DISCOVER] Website discovery failed for contact ${contactId}:`, error);
+      return {
+        success: false,
+        error: `Website discovery failed: ${error.message}`,
+      };
+    }
+  }
+
+  /**
    * Scrape a single contact by ID
    */
-  async scrapeContact(contactId: number): Promise<ScrapeResult> {
+  async scrapeContact(contactId: number, confirmedWebsite?: string): Promise<ScrapeResult> {
     try {
       // Get scraping client that uses session pool (port 5432)
       const scrapingClient = await this.prisma.getScrapingClient();
@@ -172,7 +282,7 @@ export class ScrapingService {
           scrapedData = await this.scrapeFromEmailDomain(contact);
           break;
         case 'business_search':
-          scrapedData = await this.scrapeFromBusinessSearch(contact);
+          scrapedData = await this.scrapeFromBusinessSearch(contact, confirmedWebsite);
           break;
         default:
           throw new BadRequestException(
@@ -629,32 +739,50 @@ export class ScrapingService {
 
   /**
    * Priority 3: Search by business name + location, then scrape
+   * @param contact - Contact to scrape
+   * @param confirmedWebsite - Optional: Pre-discovered website URL (skip search)
    */
-  private async scrapeFromBusinessSearch(contact: any): Promise<any> {
+  private async scrapeFromBusinessSearch(contact: any, confirmedWebsite?: string): Promise<any> {
     console.log(`[SCRAPE] Business search for: ${contact.businessName}`);
     
-    // Build search query
-    const searchTerms = [
-      contact.businessName,
-      contact.state,
-      contact.zipCode,
-    ].filter(Boolean);
-    const searchQuery = searchTerms.join(' ');
+    let discoveredUrl: string;
+    let searchQuery: string;
 
-    try {
-      // Search for the business using Google
-      const searchResults = await this.googleSearch.searchByBusinessName(
+    // If confirmedWebsite is provided, use it directly (skip discovery)
+    if (confirmedWebsite) {
+      console.log(`[SCRAPE] Using confirmed website: ${confirmedWebsite}`);
+      discoveredUrl = confirmedWebsite;
+      searchQuery = `Confirmed: ${confirmedWebsite}`;
+    } else {
+      // Original discovery logic
+      const searchTerms = [
         contact.businessName,
         contact.state,
-        contact.zipCode
-      );
-      
-      if (!searchResults.searchSuccess || !searchResults.results?.length) {
-        throw new Error(`No search results found for business: ${searchQuery}`);
-      }
+        contact.zipCode,
+      ].filter(Boolean);
+      searchQuery = searchTerms.join(' ');
 
-      // Get the first result URL
-      const discoveredUrl = searchResults.results[0].url;
+      try {
+        // Search for the business using Google
+        const searchResults = await this.googleSearch.searchByBusinessName(
+          contact.businessName,
+          contact.state,
+          contact.zipCode
+        );
+        
+        if (!searchResults.searchSuccess || !searchResults.results?.length) {
+          throw new Error(`No search results found for business: ${searchQuery}`);
+        }
+
+        // Get the first result URL
+        discoveredUrl = searchResults.results[0].url;
+      } catch (error) {
+        console.error(`[SCRAPE] Business search failed for ${contact.businessName}:`, error);
+        throw new Error(`Business search failed: ${error.message}`);
+      }
+    }
+
+    try {
       
       // Scrape the discovered URL (try Cheerio first, fallback to Playwright)
       let homepageData;
@@ -727,8 +855,8 @@ export class ScrapingService {
         timestamp: homepageData.timestamp,
       };
     } catch (error) {
-      console.error(`[SCRAPE] Business search failed for ${contact.businessName}:`, error);
-      throw new Error(`Business search failed: ${error.message}`);
+      console.error(`[SCRAPE] Business search scraping failed for ${contact.businessName}:`, error);
+      throw new Error(`Business search scraping failed: ${error.message}`);
     }
   }
 
