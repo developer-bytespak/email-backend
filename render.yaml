@@ -2,11 +2,16 @@ services:
   - type: web
     name: email-backend
     runtime: node
-    buildCommand: npm install && npm run build && npx prisma migrate deploy
+    buildCommand: |
+      npm install
+      npx playwright install --with-deps chromium
+      npm run build
+      npx prisma migrate deploy
     startCommand: npm run start:prod
     envVars:
       - key: NODE_ENV
         value: production
+      # other env vars...
     # Note: PORT is automatically set by Render, no need to specify
     # Add these environment variables in Render dashboard:
     # - DATABASE_URL (your PostgreSQL connection string)
