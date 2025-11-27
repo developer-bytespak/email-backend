@@ -7,10 +7,13 @@ services:
       npx playwright install --with-deps chromium
       npm run build
       npx prisma migrate deploy
-    startCommand: npm run start:prod
+    startCommand: |
+      npx playwright install chromium
+      npm run start:prod
     envVars:
       - key: NODE_ENV
         value: production
+      # other env vars...
       # other env vars...
     # Note: PORT is automatically set by Render, no need to specify
     # Add these environment variables in Render dashboard:
