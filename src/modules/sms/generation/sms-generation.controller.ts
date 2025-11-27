@@ -21,7 +21,11 @@ export class GenerateSmsDto {
   summaryId: number;
 
   @IsNumber()
-  clientSmsId: number;
+  clientId: number;
+
+  @IsOptional()
+  @IsNumber()
+  clientSmsId?: number;
 }
 
 export class UpdateSmsDraftDto {
@@ -49,6 +53,7 @@ export class SmsGenerationController {
     const request: SmsGenerationRequest = {
       contactId: generateSmsDto.contactId,
       summaryId: generateSmsDto.summaryId,
+      clientId: generateSmsDto.clientId,
       clientSmsId: generateSmsDto.clientSmsId,
     };
 
@@ -83,11 +88,11 @@ export class SmsGenerationController {
   }
 
   /**
-   * Get all SMS drafts for a specific clientSmsId
+   * Get all SMS drafts for a specific clientId
    */
-  @Get('client-sms/:clientSmsId/drafts')
-  async getClientSmsDrafts(@Param('clientSmsId', ParseIntPipe) clientSmsId: number) {
-    return await this.smsGenerationService.getClientSmsDrafts(clientSmsId);
+  @Get('client/:clientId/drafts')
+  async getClientSmsDrafts(@Param('clientId', ParseIntPipe) clientId: number) {
+    return await this.smsGenerationService.getClientSmsDrafts(clientId);
   }
 
   /**
@@ -118,6 +123,7 @@ export class SmsGenerationController {
       const result = await this.smsGenerationService.generateSmsDraft({
         contactId: request.contactId,
         summaryId: request.summaryId,
+        clientId: request.clientId,
         clientSmsId: request.clientSmsId,
       });
       results.push(result);

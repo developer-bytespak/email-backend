@@ -800,15 +800,6 @@ export class SmsService {
       throw new BadRequestException('You do not have permission to delete this SMS number');
     }
 
-    // Check if there are any drafts using this SMS number
-    const draftCount = await scrapingClient.smsDraft.count({
-      where: { clientSmsId: id },
-    });
-
-    if (draftCount > 0) {
-      throw new BadRequestException(`Cannot delete SMS number: ${draftCount} draft(s) are using this phone number`);
-    }
-
     await scrapingClient.clientSms.delete({
       where: { id },
     });

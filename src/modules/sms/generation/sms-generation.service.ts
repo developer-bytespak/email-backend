@@ -5,7 +5,8 @@ import { LlmClientService } from '../../summarization/llm-client/llm-client.serv
 export interface SmsGenerationRequest {
   contactId: number;
   summaryId: number;
-  clientSmsId: number;
+  clientId: number;
+  clientSmsId?: number;
 }
 
 export interface SmsGenerationResult {
@@ -86,34 +87,14 @@ export class SmsGenerationService {
         throw new BadRequestException('Summary does not belong to the specified contact');
       }
 
-      const clientSms = await scrapingClient.clientSms.findUnique({
-        where: { id: request.clientSmsId },
-        select: {
-          id: true,
-          phoneNumber: true,
-          clientId: true,
-          status: true,
-        },
-      });
-
-      if (!clientSms) {
-        throw new NotFoundException(`Client SMS with ID ${request.clientSmsId} not found`);
-      }
-
-      // Validate clientSms belongs to the same client as contact
-      if (clientSms.clientId !== contact.csvUpload.client.id) {
-        throw new BadRequestException('ClientSms does not belong to the same client as contact');
-      }
-
-      // Validate clientSms is active
-      if (clientSms.status !== 'active') {
-        throw new BadRequestException(`ClientSms with ID ${request.clientSmsId} is not active`);
+      // Validate contact belongs to the specified client
+      if (contact.csvUpload.client.id !== request.clientId) {
+        throw new BadRequestException('Contact does not belong to the specified client');
       }
 
       // Get client's products/services and businessName from ProductService table
-      const clientId = contact.csvUpload.client.id;
       const productServices = await scrapingClient.productService.findMany({
-        where: { clientId },
+        where: { clientId: request.clientId },
         select: {
           name: true,
           businessName: true,
@@ -131,7 +112,8 @@ export class SmsGenerationService {
       // Save SMS draft to database
       const smsDraft = await scrapingClient.smsDraft.create({
         data: {
-          clientSmsId: request.clientSmsId,
+          clientId: request.clientId,
+          ...(request.clientSmsId !== undefined && { clientSmsId: request.clientSmsId }),
           contactId: request.contactId,
           summaryId: request.summaryId,
           messageText: smsContent,
@@ -554,13 +536,13 @@ SMS:
   }
 
   /**
-   * Get all SMS drafts for a specific clientSmsId
+   * Get all SMS drafts for a specific clientId
    */
-  async getClientSmsDrafts(clientSmsId: number): Promise<any[]> {
+  async getClientSmsDrafts(clientId: number): Promise<any[]> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
     return await scrapingClient.smsDraft.findMany({
-      where: { clientSmsId },
+      where: { clientId },
       include: {
         contact: {
           select: {
