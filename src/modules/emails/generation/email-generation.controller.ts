@@ -23,7 +23,11 @@ export class GenerateEmailDto {
   summaryId: number;
 
   @IsNumber()
-  clientEmailId: number;
+  clientId: number;
+
+  @IsOptional()
+  @IsNumber()
+  clientEmailId?: number;
 
   @IsOptional()
   @IsIn(['friendly', 'professional', 'pro_friendly'])
@@ -63,6 +67,7 @@ export class EmailGenerationController {
     const request: EmailGenerationRequest = {
       contactId: generateEmailDto.contactId,
       summaryId: generateEmailDto.summaryId,
+      clientId: generateEmailDto.clientId,
       clientEmailId: generateEmailDto.clientEmailId,
       tone: generateEmailDto.tone || 'pro_friendly',
     };
@@ -151,6 +156,7 @@ export class EmailGenerationController {
       const result = await this.emailGenerationService.generateEmailDraft({
         contactId: request.contactId,
         summaryId: request.summaryId,
+        clientId: request.clientId,
         clientEmailId: request.clientEmailId,
         tone: request.tone || 'pro_friendly',
       });

@@ -5,7 +5,8 @@ import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
 export interface EmailGenerationRequest {
   contactId: number;
   summaryId: number;
-  clientEmailId: number;
+  clientId: number;
+  clientEmailId?: number;
   tone?: EmailTone;
 }
 
@@ -113,23 +114,28 @@ export class EmailGenerationService {
         throw new BadRequestException('Summary does not belong to the specified contact');
       }
 
-      const clientEmail = await scrapingClient.clientEmail.findUnique({
-        where: { id: request.clientEmailId },
-        select: {
-          id: true,
-          emailAddress: true,
-          clientId: true,
-        },
-      });
+      // Validate contact belongs to the specified client
+      if (!contact.csvUpload) {
+        throw new BadRequestException(`Contact ${request.contactId} has no associated CsvUpload`);
+      }
 
-      if (!clientEmail) {
-        throw new NotFoundException(`Client email with ID ${request.clientEmailId} not found`);
+      if (!contact.csvUpload.client) {
+        throw new BadRequestException(`Contact ${request.contactId}'s CsvUpload has no associated Client`);
+      }
+
+      const contactClientId = contact.csvUpload.client.id;
+      if (contactClientId !== request.clientId) {
+        this.logger.warn(
+          `Contact ${request.contactId} belongs to client ${contactClientId}, but request specified client ${request.clientId}`
+        );
+        throw new BadRequestException(
+          `Contact does not belong to the specified client. Contact belongs to client ${contactClientId}, but request specified client ${request.clientId}`
+        );
       }
 
       // Get client's products/services and businessName from ProductService table
-      const clientId = clientEmail.clientId;
       const productServices = await scrapingClient.productService.findMany({
-        where: { clientId },
+        where: { clientId: request.clientId },
         select: {
           name: true,
           businessName: true,
@@ -147,7 +153,8 @@ export class EmailGenerationService {
       // Save email draft to database
       const emailDraft = await scrapingClient.emailDraft.create({
         data: {
-          clientEmailId: request.clientEmailId,
+          clientId: request.clientId,
+          ...(request.clientEmailId !== undefined && { clientEmailId: request.clientEmailId }),
           contactId: request.contactId,
           summaryId: request.summaryId,
           subjectLines: emailContent.subjectLines, // Save all subject lines
@@ -579,12 +586,18 @@ Best regards,
   }): Promise<any> {
     const scrapingClient = await this.prisma.getScrapingClient();
 
-    // If clientEmailId is being updated, verify it exists and belongs to the same client
+    // If clientEmailId is being updated, verify it exists and belongs to the draft's client
     if (updates.clientEmailId !== undefined) {
       const draft = await scrapingClient.emailDraft.findUnique({
         where: { id: draftId },
-        include: { 
-          clientEmail: true, // clientEmailId is required, so this should always exist
+        select: {
+          clientId: true,
+          clientEmail: {
+            select: {
+              id: true,
+              emailAddress: true,
+            },
+          },
         },
       });
 
@@ -592,36 +605,38 @@ Best regards,
         throw new NotFoundException(`Email draft with ID ${draftId} not found`);
       }
 
-      if (!draft.clientEmail) {
-        throw new BadRequestException('Email draft is missing client email relation. This should not happen.');
-      }
-
       const newClientEmail = await scrapingClient.clientEmail.findUnique({
         where: { id: updates.clientEmailId },
+        select: {
+          id: true,
+          emailAddress: true,
+          clientId: true,
+        },
       });
 
       if (!newClientEmail) {
         throw new NotFoundException(`Client email with ID ${updates.clientEmailId} not found`);
       }
 
-      // Verify the new client email belongs to the same client as the existing one
-      const currentClientId = draft.clientEmail.clientId;
-      const newClientId = newClientEmail.clientId;
-      
-      if (newClientId !== currentClientId) {
+      // Verify the new client email belongs to the same client as the draft
+      if (newClientEmail.clientId !== draft.clientId) {
         this.logger.warn(
-          `Client ID mismatch: Draft ${draftId} has clientEmail ${draft.clientEmail.id} (clientId: ${currentClientId}), ` +
-          `but trying to change to clientEmail ${updates.clientEmailId} (clientId: ${newClientId})`
+          `Client ID mismatch: Draft ${draftId} belongs to client ${draft.clientId}, ` +
+          `but trying to set clientEmail ${updates.clientEmailId} which belongs to client ${newClientEmail.clientId}`
         );
         throw new BadRequestException(
-          `Cannot change email to one from a different client. Current email belongs to client ${currentClientId}, ` +
-          `new email belongs to client ${newClientId}`
+          `Cannot set email to one from a different client. Draft belongs to client ${draft.clientId}, ` +
+          `new email belongs to client ${newClientEmail.clientId}`
         );
       }
       
+      const currentEmailInfo = draft.clientEmail 
+        ? `${draft.clientEmail.id} (${draft.clientEmail.emailAddress})`
+        : 'none';
+      
       this.logger.log(
-        `Updating draft ${draftId} from clientEmail ${draft.clientEmail.id} (${draft.clientEmail.emailAddress}) ` +
-        `to clientEmail ${updates.clientEmailId} (${newClientEmail.emailAddress}) - both belong to client ${currentClientId}`
+        `Updating draft ${draftId} from clientEmail ${currentEmailInfo} ` +
+        `to clientEmail ${updates.clientEmailId} (${newClientEmail.emailAddress}) - both belong to client ${draft.clientId}`
       );
     }
 

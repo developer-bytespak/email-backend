@@ -135,7 +135,7 @@ model Summary {
 
 model EmailDraft {
   id               Int              @id @default(autoincrement())
-  clientEmailId    Int
+  clientEmailId    Int?
   contactId        Int
   summaryId        Int
   subjectLines     String[]
@@ -145,13 +145,13 @@ model EmailDraft {
   status           EmailDraftStatus @default(draft)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @default(now()) @updatedAt
-  clientEmail      ClientEmail      @relation(fields: [clientEmailId], references: [id])
+  clientEmail      ClientEmail?     @relation(fields: [clientEmailId], references: [id])
   contact          Contact          @relation(fields: [contactId], references: [id])
   summary          Summary          @relation(fields: [summaryId], references: [id])
   EmailLog         EmailLog[]
   EmailQueue       EmailQueue?
-  Client           Client?          @relation(fields: [clientId], references: [id])
-  clientId         Int?
+  Client           Client           @relation(fields: [clientId], references: [id])
+  clientId         Int
 }
 
 enum EmailDraftStatus {
@@ -296,8 +296,8 @@ model SmsDraft {
   contact          Contact        @relation(fields: [contactId], references: [id])
   summary          Summary?       @relation(fields: [summaryId], references: [id])
   SmsLog           SmsLog[]
-  Client           Client?        @relation(fields: [clientId], references: [id])
-  clientId         Int?
+  Client           Client         @relation(fields: [clientId], references: [id])
+  clientId         Int
   clientSms        ClientSms?     @relation(fields: [clientSmsId], references: [id])
 }
 

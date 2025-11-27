@@ -58,7 +58,27 @@ export class EmailsService {
       }
 
       const contact = draft.contact;
-      const clientEmail = draft.clientEmail;
+      let clientEmail = draft.clientEmail;
+
+      // Auto-select if draft has no clientEmailId (backward compatibility)
+      if (!clientEmail) {
+        if (!draft.clientId) {
+          throw new BadRequestException('Email draft does not have an associated client');
+        }
+
+        const autoSelectedClientEmail = await this.selectAvailableClientEmail(draft.clientId);
+        if (!autoSelectedClientEmail) {
+          throw new BadRequestException('No available ClientEmail found for sending');
+        }
+
+        clientEmail = autoSelectedClientEmail;
+        this.logger.log(`📧 Auto-selected ClientEmail ${autoSelectedClientEmail.id} (${autoSelectedClientEmail.emailAddress}) for draft ${draftId}`);
+      }
+
+      // TypeScript guard: ensure clientEmail is not null after auto-selection
+      if (!clientEmail) {
+        throw new BadRequestException('ClientEmail is required for sending');
+      }
 
       const verificationStatus = (clientEmail as any).verificationStatus;
       if (verificationStatus !== 'verified') {
@@ -348,10 +368,7 @@ export class EmailsService {
     const scrapingClient = await this.prisma.getScrapingClient();
 
     const where: Prisma.EmailDraftWhereInput = {
-      OR: [
-        { clientId },
-        { clientEmail: { clientId } },
-      ],
+      clientId,
     };
 
     if (clientEmailId !== undefined) {
@@ -871,15 +888,6 @@ export class EmailsService {
       throw new BadRequestException('You do not have permission to delete this email');
     }
 
-    // Check if there are any drafts using this email
-    const draftCount = await scrapingClient.emailDraft.count({
-      where: { clientEmailId: id },
-    });
-
-    if (draftCount > 0) {
-      throw new BadRequestException(`Cannot delete email: ${draftCount} draft(s) are using this email address`);
-    }
-
     await scrapingClient.clientEmail.delete({
       where: { id },
     });
@@ -1081,7 +1089,7 @@ export class EmailsService {
             verificationMethod: 'otp',
             verifiedAt,
           } as any),
-          limit: 500,
+          limit: 100,
           currentCounter: 0,
           totalCounter: 0,
         },
@@ -1308,5 +1316,35 @@ export class EmailsService {
       maskedTarget: this.otpService.maskTarget(clientEmail.emailAddress),
       expiresAt,
     };
+  }
+
+  /**
+   * Select an available ClientEmail for a given client
+   * Prioritizes least-used and respects limits
+   */
+  private async selectAvailableClientEmail(clientId: number): Promise<any | null> {
+    const scrapingClient = await this.prisma.getScrapingClient();
+
+    const clientEmailList = await scrapingClient.clientEmail.findMany({
+      where: {
+        clientId,
+        status: 'active',
+        ...({ verificationStatus: 'verified' } as any),
+      },
+      orderBy: [
+        { currentCounter: 'asc' }, // Prioritize least-used
+        { totalCounter: 'asc' },
+      ],
+    });
+
+    // Find first available (not at limit)
+    for (const clientEmail of clientEmailList) {
+      // Check if within limit
+      if (clientEmail.currentCounter < clientEmail.limit) {
+        return clientEmail;
+      }
+    }
+
+    return null;
   }
 }

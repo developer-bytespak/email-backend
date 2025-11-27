@@ -182,21 +182,30 @@ export class EmailSchedulerService implements OnModuleInit {
         `(~${emailsPerMailbox} emails per mailbox)`
       );
     } else {
-      // Use existing mailbox assignments from drafts
-      const uniqueMailboxIds = [...new Set(drafts.map(d => d.clientEmailId))];
+      // Use existing mailbox assignments from drafts (filter out nulls)
+      const uniqueMailboxIds = [...new Set(drafts.map(d => d.clientEmailId).filter((id): id is number => id !== null))];
+      if (uniqueMailboxIds.length === 0) {
+        throw new Error('No drafts have assigned mailboxes. Please assign mailboxes first or specify clientEmailIds parameter.');
+      }
       targetMailboxIds = uniqueMailboxIds;
       this.logger.log(
         `📧 Using existing mailbox assignments (${targetMailboxIds.length} mailbox(es))`
       );
     }
 
-    // Group drafts by mailbox
+    // Group drafts by mailbox (skip drafts without clientEmailId)
     const mailboxGroups = new Map<number, number[]>();
     for (const draft of drafts) {
-      if (!mailboxGroups.has(draft.clientEmailId)) {
-        mailboxGroups.set(draft.clientEmailId, []);
+      if (draft.clientEmailId === null) {
+        this.logger.warn(`Draft ${draft.id} has no clientEmailId assigned, skipping from batch`);
+        continue;
       }
-      mailboxGroups.get(draft.clientEmailId)!.push(draft.id);
+      // TypeScript guard: clientEmailId is not null after the check above
+      const clientEmailId = draft.clientEmailId;
+      if (!mailboxGroups.has(clientEmailId)) {
+        mailboxGroups.set(clientEmailId, []);
+      }
+      mailboxGroups.get(clientEmailId)!.push(draft.id);
     }
 
     const totalEmails = drafts.length;
