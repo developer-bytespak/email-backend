@@ -18,6 +18,11 @@ export class UpdateProductServiceDto {
   @IsOptional()
   @IsIn(['product', 'service'])
   type?: 'product' | 'service';
+
+  // businessName is optional - if provided, it will be used; otherwise auto-filled from existing records or client name
+  @IsString()
+  @IsOptional()
+  businessName?: string;
 }
 
 export class UpdateProfileDto {
