@@ -4,7 +4,7 @@ services:
     runtime: node
     buildCommand: |
       npm install
-      npx playwright install --with-deps chromium
+      npx playwright install chromium
       npm run build
       npx prisma migrate deploy
     startCommand: |
