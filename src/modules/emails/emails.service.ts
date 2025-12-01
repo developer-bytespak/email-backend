@@ -725,7 +725,7 @@ export class EmailsService {
       lastOtpSentAt: v.lastOtpSentAt,
       currentCounter: 0,
       totalCounter: 0,
-      limit: 500,
+      limit: 100,
       createdAt: v.createdAt,
       updatedAt: v.updatedAt,
       verificationId: v.id, // Store verification ID for frontend
@@ -787,7 +787,7 @@ export class EmailsService {
           lastOtpSentAt: existingVerification.lastOtpSentAt,
           currentCounter: 0,
           totalCounter: 0,
-          limit: 500,
+          limit: 100,
           createdAt: existingVerification.createdAt,
           updatedAt: existingVerification.updatedAt,
           verificationId: existingVerification.id, // Store verification ID for frontend
@@ -842,7 +842,7 @@ export class EmailsService {
         lastOtpSentAt: now,
         currentCounter: 0,
         totalCounter: 0,
-        limit: 500,
+        limit: 100,
         createdAt: now,
         updatedAt: now,
         verificationId: verification.id, // Store verification ID for frontend
