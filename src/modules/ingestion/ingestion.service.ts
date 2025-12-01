@@ -38,24 +38,47 @@ export class IngestionService {
     private readonly validationService: ValidationService,
   ) {}
 
-  private computeContactValidity(contact: { emailValid: boolean; phone: string | null }) {
-    const phone = contact.phone?.trim() ?? '';
-    const hasPhone = phone.length > 0;
+  private computeContactValidity(contact: { 
+    emailValid: boolean; 
+    phone: string | null;
+    websiteValid?: boolean;
+    website?: string | null;
+  }) {
+    // 1. Check Email: must exist AND emailValid === true from DB
     const emailValid = contact.emailValid === true;
-
-    if (emailValid && hasPhone) {
-      return { isValid: true, reason: 'Valid email and phone number present' };
+    
+    // 2. Check Phone: must exist AND length 7-15 digits
+    const phone = contact.phone?.trim() ?? '';
+    const phoneDigits = phone.replace(/\D/g, ''); // Remove non-digits
+    const hasValidPhone = phoneDigits.length >= 7 && phoneDigits.length <= 15;
+    
+    // 3. Check Website: if exists, must be valid (websiteValid === true)
+    const website = contact.website?.trim() ?? '';
+    const hasWebsite = website.length > 0;
+    const websiteExistsAndInvalid = hasWebsite && contact.websiteValid === false;
+    
+    // Website blocker: If website exists but is invalid, contact is invalid
+    if (websiteExistsAndInvalid) {
+      return { 
+        isValid: false, 
+        reason: 'Website exists but is invalid (websiteValid = false)' 
+      };
     }
-
+    
+    // Contact is valid if: (Valid email OR Valid phone) AND (No website OR website is valid)
+    if (emailValid && hasValidPhone) {
+      return { isValid: true, reason: 'Valid email and valid phone number (7-15 digits) present' };
+    }
+    
     if (emailValid) {
       return { isValid: true, reason: 'Valid email address present' };
     }
-
-    if (hasPhone) {
-      return { isValid: true, reason: 'Phone number present (email not validated)' };
+    
+    if (hasValidPhone) {
+      return { isValid: true, reason: 'Valid phone number (7-15 digits) present' };
     }
-
-    return { isValid: false, reason: 'Missing valid email and phone number' };
+    
+    return { isValid: false, reason: 'Missing valid email or valid phone number (7-15 digits)' };
   }
 
   private mapContact(contact: ContactWithUpload) {
@@ -116,6 +139,45 @@ export class IngestionService {
     return payload;
   }
 
+  /**
+   * Build search conditions based on search term and searchField
+   */
+  private buildSearchConditions(
+    search: string,
+    searchField?: 'all' | 'businessName' | 'email' | 'website',
+  ): Prisma.ContactWhereInput[] {
+    const field = searchField || 'all';
+    const searchConditions: Prisma.ContactWhereInput[] = [];
+
+    // Build search conditions based on searchField
+    if (field === 'all' || field === 'businessName') {
+      searchConditions.push({
+        businessName: { contains: search, mode: Prisma.QueryMode.insensitive },
+      });
+    }
+
+    if (field === 'all' || field === 'email') {
+      searchConditions.push({
+        email: { contains: search, mode: Prisma.QueryMode.insensitive },
+      });
+    }
+
+    if (field === 'all' || field === 'website') {
+      searchConditions.push({
+        website: { contains: search, mode: Prisma.QueryMode.insensitive },
+      });
+    }
+
+    // For 'all', also include phone (backward compatibility)
+    if (field === 'all') {
+      searchConditions.push({
+        phone: { contains: search, mode: Prisma.QueryMode.insensitive },
+      });
+    }
+
+    return searchConditions;
+  }
+
   private buildContactsWhere(clientId: number, query: GetContactsQueryDto): Prisma.ContactWhereInput {
     const where: Prisma.ContactWhereInput = {
       csvUpload: {
@@ -134,11 +196,10 @@ export class IngestionService {
     if (query.search) {
       const search = query.search.trim();
       if (search.length > 0) {
-        where.OR = [
-          { businessName: { contains: search, mode: Prisma.QueryMode.insensitive } },
-          { email: { contains: search, mode: Prisma.QueryMode.insensitive } },
-          { phone: { contains: search, mode: Prisma.QueryMode.insensitive } },
-        ];
+        const searchConditions = this.buildSearchConditions(search, query.searchField);
+        if (searchConditions.length > 0) {
+          where.OR = searchConditions;
+        }
       }
     }
 
@@ -149,19 +210,43 @@ export class IngestionService {
       : [];
 
     if (query.validOnly) {
-      // Valid contacts are those with email OR phone (matches frontend logic)
+      // Valid = (Valid email OR Valid phone) AND (No website OR website is valid)
+      // Valid email = email exists AND emailValid === true
+      // Valid phone = phone exists AND length between 7-15 characters (digit validation done in application layer)
+      // Website condition = no website OR websiteValid === true
       andConditions.push({
-        OR: [
+        AND: [
           {
-            AND: [
-              { email: { not: null } },
-              { email: { not: '' } },
+            // Primary condition: Valid email OR Valid phone
+            OR: [
+              {
+                // Valid email: email exists AND emailValid === true
+                AND: [
+                  { email: { not: null } },
+                  { email: { not: '' } },
+                  { emailValid: true },
+                ],
+              },
+              {
+                // Valid phone: phone exists (length validation done in computeContactValidity)
+                AND: [
+                  { phone: { not: null } },
+                  { phone: { not: '' } },
+                  { phone: { not: { contains: '' } } }, // Ensure it's not empty
+                ],
+              },
             ],
           },
           {
-            AND: [
-              { phone: { not: null } },
-              { phone: { not: '' } },
+            // Website condition: no website OR website is valid
+            OR: [
+              {
+                OR: [
+                  { website: null },
+                  { website: { equals: '' } },
+                ],
+              },
+              { websiteValid: true },
             ],
           },
         ],
@@ -169,20 +254,36 @@ export class IngestionService {
     }
 
     if (query.invalidOnly) {
-      // Invalid contacts are those with no email AND no phone
-      // This matches the frontend logic where validity is based on email/phone presence
+      // Invalid = (No valid email AND No valid phone) OR (Website exists AND website is invalid)
+      // No valid email = email is null/empty OR emailValid === false
+      // No valid phone = phone is null/empty
+      // Website invalid = website exists AND websiteValid === false
       andConditions.push({
-        AND: [
+        OR: [
           {
-            OR: [
-              { email: null },
-              { email: { equals: '' } },
+            // Condition 1: No valid email AND No valid phone
+            AND: [
+              {
+                OR: [
+                  { email: null },
+                  { email: { equals: '' } },
+                  { emailValid: false },
+                ],
+              },
+              {
+                OR: [
+                  { phone: null },
+                  { phone: { equals: '' } },
+                ],
+              },
             ],
           },
           {
-            OR: [
-              { phone: null },
-              { phone: { equals: '' } },
+            // Condition 2: Website exists AND website is invalid
+            AND: [
+              { website: { not: null } },
+              { website: { not: '' } },
+              { websiteValid: false },
             ],
           },
         ],
@@ -465,7 +566,7 @@ export class IngestionService {
   /**
    * Get all invalid contacts for a client (no pagination)
    * Invalid contacts are those that meet ANY of these conditions:
-   * 1. No email AND no phone
+   * 1. No valid email AND no valid phone
    * 2. Website is present but invalid (websiteValid === false)
    */
   async getAllInvalidContacts(clientId: number): Promise<ContactWithUpload[]> {
@@ -473,15 +574,16 @@ export class IngestionService {
       csvUpload: {
         clientId,
       },
-      // Invalid contacts: (no email AND no phone) OR (website present but invalid)
+      // Invalid contacts: (No valid email AND No valid phone) OR (Website exists AND website is invalid)
       OR: [
-        // Condition 1: No email AND no phone
+        // Condition 1: No valid email AND No valid phone
         {
           AND: [
             {
               OR: [
                 { email: null },
                 { email: { equals: '' } },
+                { emailValid: false },
               ],
             },
             {
@@ -492,11 +594,11 @@ export class IngestionService {
             },
           ],
         },
-        // Condition 2: Website present but invalid
+        // Condition 2: Website exists AND website is invalid
         {
           AND: [
             { website: { not: null } },
-            { website: { not: { equals: '' } } },
+            { website: { not: '' } },
             { websiteValid: false },
           ],
         },
@@ -545,11 +647,10 @@ export class IngestionService {
     if (query.search) {
       const search = query.search.trim();
       if (search.length > 0) {
-        baseWhere.OR = [
-          { businessName: { contains: search, mode: Prisma.QueryMode.insensitive } },
-          { email: { contains: search, mode: Prisma.QueryMode.insensitive } },
-          { phone: { contains: search, mode: Prisma.QueryMode.insensitive } },
-        ];
+        const searchConditions = this.buildSearchConditions(search, query.searchField);
+        if (searchConditions.length > 0) {
+          baseWhere.OR = searchConditions;
+        }
       }
     }
 
@@ -561,41 +662,76 @@ export class IngestionService {
       this.prisma.contact.count({ where: baseWhere }),
       // Filtered total (with validity filters) - for pagination
       this.prisma.contact.count({ where }),
-      // Total valid: contacts with email OR phone
-      this.prisma.contact.count({
-        where: {
-          ...baseWhere,
-          OR: [
-            {
-              AND: [
-                { email: { not: null } },
-                { email: { not: '' } },
-              ],
-            },
-            {
-              AND: [
-                { phone: { not: null } },
-                { phone: { not: '' } },
-              ],
-            },
-          ],
-        },
-      }),
-      // Total invalid: contacts with no email AND no phone
+      // Total valid: (Valid email OR Valid phone) AND (No website OR website is valid)
+      // Valid = (email exists AND emailValid === true) OR (phone exists) AND (no website OR websiteValid === true)
       this.prisma.contact.count({
         where: {
           ...baseWhere,
           AND: [
             {
+              // Primary condition: Valid email OR Valid phone
               OR: [
-                { email: null },
-                { email: { equals: '' } },
+                {
+                  // Valid email: email exists AND emailValid === true
+                  AND: [
+                    { email: { not: null } },
+                    { email: { not: '' } },
+                    { emailValid: true },
+                  ],
+                },
+                {
+                  // Valid phone: phone exists (length validation done in computeContactValidity)
+                  AND: [
+                    { phone: { not: null } },
+                    { phone: { not: '' } },
+                  ],
+                },
               ],
             },
             {
+              // Website condition: no website OR website is valid
               OR: [
-                { phone: null },
-                { phone: { equals: '' } },
+                {
+                  OR: [
+                    { website: null },
+                    { website: { equals: '' } },
+                  ],
+                },
+                { websiteValid: true },
+              ],
+            },
+          ],
+        },
+      }),
+      // Total invalid: (No valid email AND No valid phone) OR (Website exists AND website is invalid)
+      this.prisma.contact.count({
+        where: {
+          ...baseWhere,
+          OR: [
+            {
+              // Condition 1: No valid email AND No valid phone
+              AND: [
+                {
+                  OR: [
+                    { email: null },
+                    { email: { equals: '' } },
+                    { emailValid: false },
+                  ],
+                },
+                {
+                  OR: [
+                    { phone: null },
+                    { phone: { equals: '' } },
+                  ],
+                },
+              ],
+            },
+            {
+              // Condition 2: Website exists AND website is invalid
+              AND: [
+                { website: { not: null } },
+                { website: { not: '' } },
+                { websiteValid: false },
               ],
             },
           ],
@@ -748,14 +884,14 @@ export class IngestionService {
   /**
    * Bulk delete all invalid contacts for a client
    * Invalid contacts are those that meet ANY of these conditions:
-   * 1. No email AND no phone
+   * 1. No valid email AND no valid phone
    * 2. Website is present but invalid (websiteValid === false)
    * Uses raw SQL for performance (single DELETE with JOIN)
    * Returns the count of deleted records
    */
   async bulkDeleteInvalidContacts(clientId: number): Promise<{ deletedCount: number }> {
     // First, count how many will be deleted
-    // Invalid contacts: (no email AND no phone) OR (website present but invalid)
+    // Invalid contacts: (No valid email AND No valid phone) OR (Website exists AND website is invalid)
     const countResult = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
       SELECT COUNT(*) as count
       FROM "Contact" c
@@ -763,7 +899,7 @@ export class IngestionService {
       WHERE cu."clientId" = ${clientId}
         AND (
           (
-            (c.email IS NULL OR c.email = '')
+            (c.email IS NULL OR c.email = '' OR c."emailValid" = false)
             AND (c.phone IS NULL OR c.phone = '')
           )
           OR (
@@ -789,7 +925,7 @@ export class IngestionService {
         AND cu."clientId" = ${clientId}
         AND (
           (
-            (c.email IS NULL OR c.email = '')
+            (c.email IS NULL OR c.email = '' OR c."emailValid" = false)
             AND (c.phone IS NULL OR c.phone = '')
           )
           OR (
