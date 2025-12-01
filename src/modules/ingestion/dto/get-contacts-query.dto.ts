@@ -54,6 +54,12 @@ export class GetContactsQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsEnum(['all', 'businessName', 'email', 'website'], {
+    message: 'searchField must be one of: all, businessName, email, website',
+  })
+  searchField?: 'all' | 'businessName' | 'email' | 'website';
 }
 
 
