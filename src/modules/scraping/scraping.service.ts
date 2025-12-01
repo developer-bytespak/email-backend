@@ -233,6 +233,115 @@ export class ScrapingService {
   }
 
   /**
+   * Discover websites for multiple contacts in batch (business_search only)
+   * Returns all discovered URLs for user confirmation before scraping
+   */
+  async discoverBatchWebsites(uploadId: number, limit?: number): Promise<{
+    total: number;
+    discovered: number;
+    failed: number;
+    results: Array<{
+      contactId: number;
+      businessName: string;
+      success: boolean;
+      data?: {
+        discoveredWebsite: string;
+        confidence: 'high' | 'medium' | 'low';
+        method: 'business_search';
+        searchQuery: string;
+      };
+      error?: string;
+    }>;
+  }> {
+    // Get CSV upload to verify it exists
+    const csvUpload = await this.prisma.csvUpload.findUnique({
+      where: { id: uploadId },
+    });
+
+    if (!csvUpload) {
+      throw new NotFoundException(`CSV upload with ID ${uploadId} not found`);
+    }
+
+    // Get contacts with business_search method that are ready to scrape
+    const contacts = await this.prisma.contact.findMany({
+      where: {
+        csvUploadId: uploadId,
+        status: 'ready_to_scrape',
+        scrapeMethod: 'business_search', // Only business_search contacts
+      },
+      orderBy: {
+        scrapePriority: 'asc',
+      },
+      take: limit || 100,
+    });
+
+    if (contacts.length === 0) {
+      return {
+        total: 0,
+        discovered: 0,
+        failed: 0,
+        results: [],
+      };
+    }
+
+    // Discover websites with controlled concurrency
+    const concurrency = Math.min(5, contacts.length); // Max 5 concurrent
+    const results: Array<any> = [];
+    let discovered = 0;
+    let failed = 0;
+
+    // Process contacts in chunks
+    for (let i = 0; i < contacts.length; i += concurrency) {
+      const chunk = contacts.slice(i, i + concurrency);
+      
+      // Process chunk in parallel
+      const chunkPromises = chunk.map(async (contact) => {
+        try {
+          const result = await this.discoverWebsite(contact.id);
+          return {
+            contactId: contact.id,
+            businessName: contact.businessName || '',
+            success: result.success,
+            data: result.data,
+            error: result.error,
+          };
+        } catch (error) {
+          return {
+            contactId: contact.id,
+            businessName: contact.businessName || '',
+            success: false,
+            error: error.message || 'Unknown error',
+          };
+        }
+      });
+
+      const chunkResults = await Promise.all(chunkPromises);
+      
+      // Process results
+      chunkResults.forEach(result => {
+        results.push(result);
+        if (result.success) {
+          discovered++;
+        } else {
+          failed++;
+        }
+      });
+
+      // Add delay between chunks
+      if (i + concurrency < contacts.length) {
+        await this.sleep(2000); // 2 second delay
+      }
+    }
+
+    return {
+      total: contacts.length,
+      discovered,
+      failed,
+      results,
+    };
+  }
+
+  /**
    * Scrape a single contact by ID
    */
   async scrapeContact(contactId: number, confirmedWebsite?: string): Promise<ScrapeResult> {
@@ -378,8 +487,13 @@ export class ScrapingService {
   /**
    * Scrape multiple contacts in batch with parallel processing
    * Optimized: Uses controlled concurrency instead of sequential processing
+   * @param confirmedWebsites - Optional: Map of contactId to confirmed website URL (for business_search contacts)
    */
-  async scrapeBatch(uploadId: number, limit: number = 20): Promise<BatchScrapeResult> {
+  async scrapeBatch(
+    uploadId: number, 
+    limit: number = 20,
+    confirmedWebsites?: { [contactId: number]: string }
+  ): Promise<BatchScrapeResult> {
     // Get CSV upload to verify it exists
     const csvUpload = await this.prisma.csvUpload.findUnique({
       where: { id: uploadId },
@@ -423,7 +537,9 @@ export class ScrapingService {
       // Process chunk in parallel
       const chunkPromises = chunk.map(async (contact) => {
         try {
-          const result = await this.scrapeContact(contact.id);
+          // Use confirmed website if provided (for business_search contacts)
+          const confirmedWebsite = confirmedWebsites?.[contact.id];
+          const result = await this.scrapeContact(contact.id, confirmedWebsite);
           return result;
         } catch (error) {
           return {

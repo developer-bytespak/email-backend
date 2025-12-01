@@ -29,6 +29,35 @@ import {
     }
 
     /**
+     * Discover websites for multiple contacts in batch (business_search only, no scraping)
+     * POST /scraping/discover-batch
+     * Body: { uploadId: number, limit?: number }
+     * 
+     * Returns all discovered URLs for user confirmation before scraping
+     */
+    @Post('discover-batch')
+    async discoverBatchWebsites(
+      @Body('uploadId', ParseIntPipe) uploadId: number,
+      @Body('limit') limit?: number,
+    ) {
+      const batchLimit = limit && limit > 0 ? Math.min(limit, 100) : 100;
+      
+      const result = await this.scrapingService.discoverBatchWebsites(uploadId, batchLimit);
+      
+      return {
+        message: `Batch discovery completed. ${result.discovered} discovered, ${result.failed} failed`,
+        uploadId,
+        limit: batchLimit,
+        summary: {
+          total: result.total,
+          discovered: result.discovered,
+          failed: result.failed,
+        },
+        results: result.results, // All discovered URLs for confirmation
+      };
+    }
+
+    /**
      * Scrape a single contact by ID
      * POST /scraping/scrape/:contactId
      * Body (optional): { confirmedWebsite?: string }
@@ -57,16 +86,25 @@ import {
     /**
      * Scrape multiple contacts in batch
      * POST /scraping/batch
-     * Body: { uploadId: number, limit?: number }
+     * Body: { 
+     *   uploadId: number, 
+     *   limit?: number,
+     *   confirmedWebsites?: { [contactId: number]: string } // Optional: confirmed URLs for business_search contacts
+     * }
      */
     @Post('batch')
     async scrapeBatch(
       @Body('uploadId', ParseIntPipe) uploadId: number,
       @Body('limit') limit?: number,
+      @Body('confirmedWebsites') confirmedWebsites?: { [contactId: number]: string },
     ) {
       const batchLimit = limit && limit > 0 ? Math.min(limit, 100) : 20;
       
-      const result = await this.scrapingService.scrapeBatch(uploadId, batchLimit);
+      const result = await this.scrapingService.scrapeBatch(
+        uploadId, 
+        batchLimit,
+        confirmedWebsites, // Pass confirmed websites
+      );
       
       return {
         message: `Batch scraping completed. ${result.successful} successful, ${result.failed} failed`,
