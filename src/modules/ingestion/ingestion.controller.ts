@@ -142,6 +142,23 @@ export class IngestionController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('contacts/invalid/:csvUploadId')
+  async getInvalidContactsByCsvUpload(
+    @Request() req,
+    @Param('csvUploadId', ParseIntPipe) csvUploadId: number,
+  ) {
+    const clientId = req.user.id;
+    const contacts = await this.ingestionService.getInvalidContactsByCsvUpload(clientId, csvUploadId);
+
+    return {
+      message: `Invalid contacts from CSV upload ${csvUploadId} retrieved successfully`,
+      count: contacts.length,
+      contacts,
+      csvUploadId,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('contacts/invalid/bulk')
   async bulkDeleteInvalidContacts(@Request() req) {
     const clientId = req.user.id;

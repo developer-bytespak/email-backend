@@ -6,6 +6,7 @@ import { Prisma, Contact as PrismaContact, ContactStatus } from '@prisma/client'
 import { GetContactsQueryDto } from './dto/get-contacts-query.dto';
 import { UpdateContactDto } from './dto/update-contact.dto';
 import { BulkUpdateContactsDto, BulkUpdateResult } from './dto/bulk-update-contacts.dto';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import csv = require('csv-parser');
 
 interface CsvRow {
@@ -37,6 +38,70 @@ export class IngestionService {
     private readonly prisma: PrismaService,
     private readonly validationService: ValidationService,
   ) {}
+
+  /**
+   * Check if a phone number is valid in E.164 format
+   * Phone must start with + and be parseable with national number length 7-15
+   */
+  private isPhoneValidE164(phone: string | null | undefined): boolean {
+    if (!phone || !phone.trim()) return false;
+    
+    const cleaned = phone.trim().replace(/[\s\-\(\)\.]/g, '');
+    
+    // Must start with + for E.164 format
+    if (!cleaned.startsWith('+')) return false;
+    
+    try {
+      const parsed = parsePhoneNumberFromString(cleaned);
+      if (!parsed) return false;
+      
+      const nationalNumber = parsed.nationalNumber;
+      // Allow numbers that can be parsed, even if isValid() returns false
+      // Only check length requirements (7-15 digits)
+      return nationalNumber.length >= 7 && nationalNumber.length <= 15;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Determine if a contact is invalid based on the validation logic (matches frontend)
+   * Contact is invalid if ANY of these conditions are met:
+   * 1. Phone exists but is not in E.164 format (phone blocker)
+   * 2. Website exists AND website is invalid (website blocker)
+   * 3. No valid email AND no valid phone (base invalidity)
+   * 
+   * Contact is valid if:
+   * (Valid email OR Valid phone in E.164) AND (No website OR website is valid)
+   */
+  private isContactInvalid(contact: ContactWithUpload): boolean {
+    // Check email validity
+    const emailValid = contact.emailValid === true;
+    
+    // Check phone validity (E.164 format required)
+    const phone = contact.phone?.trim() ?? '';
+    const phoneExists = phone.length > 0;
+    const hasValidPhone = this.isPhoneValidE164(contact.phone);
+    
+    // Phone blocker: If phone exists but is not in E.164 format, contact is invalid
+    // This must be checked first (priority) - matches frontend logic
+    if (phoneExists && !hasValidPhone) {
+      return true;
+    }
+    
+    // Check website validity
+    const website = contact.website?.trim() ?? '';
+    const hasWebsite = website.length > 0;
+    const websiteValid = contact.websiteValid === true;
+    
+    // Website blocker: If website exists but is invalid, contact is invalid
+    if (hasWebsite && contact.websiteValid === false) {
+      return true;
+    }
+    
+    // Base invalidity: Contact is invalid if no valid email AND no valid phone
+    return !emailValid && !hasValidPhone;
+  }
 
   private computeContactValidity(contact: { 
     emailValid: boolean; 
@@ -599,43 +664,21 @@ export class IngestionService {
   /**
    * Get all invalid contacts for a client (no pagination)
    * Invalid contacts are those that meet ANY of these conditions:
-   * 1. No valid email AND no valid phone
-   * 2. Website is present but invalid (websiteValid === false)
+   * 1. Phone exists but is not in E.164 format (phone blocker)
+   * 2. No valid email AND no valid phone (E.164 format required)
+   * 3. Website is present but invalid (websiteValid === false)
+   * 
+   * Note: Phone numbers must be in E.164 format (start with + and be parseable)
+   * This matches the frontend validation logic exactly.
    */
   async getAllInvalidContacts(clientId: number): Promise<ContactWithUpload[]> {
+    // Fetch ALL contacts for the client
+    // We can't check E.164 format in Prisma, so we must fetch all and filter in memory
     const where: Prisma.ContactWhereInput = {
       csvUpload: {
         clientId,
       },
-      // Invalid contacts: (No valid email AND No valid phone) OR (Website exists AND website is invalid)
-      OR: [
-        // Condition 1: No valid email AND No valid phone
-        {
-          AND: [
-            {
-              OR: [
-                { email: null },
-                { email: { equals: '' } },
-                { emailValid: false },
-              ],
-            },
-            {
-              OR: [
-                { phone: null },
-                { phone: { equals: '' } },
-              ],
-            },
-          ],
-        },
-        // Condition 2: Website exists AND website is invalid
-        {
-          AND: [
-            { website: { not: null } },
-            { website: { not: '' } },
-            { websiteValid: false },
-          ],
-        },
-      ],
+      // No filters - fetch all contacts and filter in memory
     };
 
     const contacts = await this.prisma.contact.findMany({
@@ -652,7 +695,67 @@ export class IngestionService {
       },
     });
 
-    return contacts.map((contact) => this.mapContact(contact)) as ContactWithUpload[];
+    // Map contacts and filter by E.164 validation logic
+    const mappedContacts = contacts.map((contact) => this.mapContact(contact)) as ContactWithUpload[];
+    
+    // Filter contacts using the validation logic (E.164 format check)
+    // This catches ALL invalid contacts:
+    // - Phone exists but not in E.164 format (phone blocker)
+    // - No valid email AND no valid phone (E.164)
+    // - Invalid website (website blocker)
+    return mappedContacts.filter((contact) => this.isContactInvalid(contact));
+  }
+
+  /**
+   * Get invalid contacts from a specific CSV upload
+   * Uses the same validation logic as getAllInvalidContacts but filters by csvUploadId
+   */
+  async getInvalidContactsByCsvUpload(clientId: number, csvUploadId: number): Promise<ContactWithUpload[]> {
+    // First verify the CSV upload belongs to the client
+    const upload = await this.prisma.csvUpload.findFirst({
+      where: {
+        id: csvUploadId,
+        clientId,
+      },
+    });
+
+    if (!upload) {
+      throw new NotFoundException(`CSV upload with ID ${csvUploadId} not found or does not belong to client`);
+    }
+
+    // Fetch ALL contacts from this CSV upload
+    // We can't check E.164 format in Prisma, so we must fetch all and filter in memory
+    const where: Prisma.ContactWhereInput = {
+      csvUploadId,
+      csvUpload: {
+        clientId,
+      },
+      // No filters - fetch all contacts and filter in memory
+    };
+
+    const contacts = await this.prisma.contact.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        csvUpload: {
+          select: {
+            id: true,
+            fileName: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    // Map contacts and filter by E.164 validation logic
+    const mappedContacts = contacts.map((contact) => this.mapContact(contact)) as ContactWithUpload[];
+    
+    // Filter contacts using the validation logic (E.164 format check)
+    // This catches ALL invalid contacts:
+    // - Phone exists but not in E.164 format
+    // - No valid email AND no valid phone (E.164)
+    // - Invalid website
+    return mappedContacts.filter((contact) => this.isContactInvalid(contact));
   }
 
   async listContacts(clientId: number, query: GetContactsQueryDto) {
