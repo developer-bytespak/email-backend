@@ -205,7 +205,7 @@ ${painPointsFormatted || 'No specific pain points identified'}
 **CLIENT BUSINESS INFORMATION:**
 ${clientBusinessInfo}
 
-Our Services (Bytes Platform):
+Our Services (${clientBusinessName}):
 ${servicesText}
 
 We help companies turn ideas into working digital products using modern technologies.
@@ -214,7 +214,7 @@ Instructions for the Model:
 
 Analyze the company summary + pain points.
 
-Select the ONE Bytes Platform service that best fits.
+Select the ONE ${clientBusinessName} service that best fits.
 
 Write ONE personalized SMS, max 320 characters.
 
@@ -224,7 +224,7 @@ Natural opener referencing their company or a clear pain point.
 
 Brief acknowledgment of the challenge or opportunity.
 
-One simple way Bytes Platform can help (one benefit only).
+One simple way ${clientBusinessName} can help (one benefit only).
 
 End with a light CTA like: Open to a quick chat?
 

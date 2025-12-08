@@ -305,7 +305,7 @@ export class EmailGenerationService {
   }
 
   /**
-   * Build the prompt for email generation based on Bytes Platform requirements
+   * Build the prompt for email generation based on client business requirements
    */
   private buildEmailGenerationPrompt(summary: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string): string {
     const toneInstructions = this.getToneInstructions(tone);
@@ -344,7 +344,7 @@ export class EmailGenerationService {
 }`;
 
     return `
-You are a B2B outreach specialist writing for Bytes Platform. Create a personalized email that directly addresses specific business challenges.
+You are a B2B outreach specialist writing for ${contact.businessName}. Create a personalized email that directly addresses specific business challenges.
 
 **TARGET BUSINESS:** ${contact.businessName}
 **WEBSITE:** ${contact.website || 'Not provided'}
@@ -365,13 +365,13 @@ ${scrapedDetails}
 **CLIENT BUSINESS INFORMATION:**
 ${clientBusinessInfo}
 
-**BYTES PLATFORM SERVICES:**
+**${clientBusinessName.toUpperCase()} SERVICES:**
 ${servicesText}
 
 **REQUIREMENTS:**
 1. Reference a specific detail from their business analysis or website
 2. Address 1-2 specific pain points mentioned above
-3. Connect their pain points to specific Bytes Platform services
+3. Connect their pain points to specific ${clientBusinessName} services
 4. Use ${toneInstructions} tone
 5. Keep email 100-180 words, 2-3 paragraphs max
 6. Include soft call-to-action
@@ -381,7 +381,7 @@ ${servicesText}
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
   "emailBody": "Complete email body text here (100-140 words, 2 paragraphs)",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
-  "rationale": "Which pain point was addressed and which Bytes Platform service was offered as solution"
+  "rationale": "Which pain point was addressed and which ${clientBusinessName} service was offered as solution"
 }
 
 **ICE BREAKER GUIDELINES:**
@@ -519,7 +519,7 @@ ${servicesText}
 
 I was checking out your business and noticed some interesting opportunities for growth. It seems like there might be some challenges that could be addressed with the right technology solutions.
 
-At Bytes Platform, we specialize in helping businesses like yours streamline operations and accelerate growth through custom software development, AI integrations, and modern web solutions.
+We specialize in helping businesses like yours streamline operations and accelerate growth through custom software development, AI integrations, and modern web solutions.
 
 Would you be up for a quick chat to explore what's possible? Let me know what works for you!
 
