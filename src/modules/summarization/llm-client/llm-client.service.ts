@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
+import { getNextOpenAiApiKey } from '../../../common/utils/gemini-key-rotator';
 
 export interface GeminiResponse {
   summary: string;
@@ -15,7 +15,8 @@ export interface GeminiResponse {
 @Injectable()
 export class LlmClientService {
   private readonly logger = new Logger(LlmClientService.name);
-  private readonly GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
+  private readonly OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
+  private readonly OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   
   private requestQueue: Array<() => Promise<any>> = [];
   private isProcessing = false;
@@ -29,23 +30,23 @@ export class LlmClientService {
       // Prepare the prompt for business analysis
       const prompt = this.buildBusinessAnalysisPrompt(content);
       
-      // Call Gemini API with rate limiting
-      const response = await this.callGeminiAPI(prompt);
+      // Call OpenAI API with rate limiting
+      const response = await this.callOpenAiAPI(prompt);
       
       const processingTime = Date.now() - startTime;
       
       // Parse the structured response
-      const parsedResponse = this.parseGeminiResponse(response.text);
+      const parsedResponse = this.parseOpenAiResponse(response.text);
       
       return {
         ...parsedResponse,
         tokensUsed: response.tokensUsed,
-        model: 'gemini-2.0-flash-lite',
+        model: this.OPENAI_MODEL,
         processingTime
       };
       
     } catch (error) {
-      this.logger.error('Gemini API call failed:', error);
+      this.logger.error('OpenAI API call failed:', error);
       throw new Error(`AI analysis failed: ${error.message}`);
     }
   }
@@ -77,7 +78,7 @@ Guidelines:
 `;
   }
 
-  private async callGeminiAPI(prompt: string): Promise<{ text: string; tokensUsed: number }> {
+  private async callOpenAiAPI(prompt: string): Promise<{ text: string; tokensUsed: number }> {
     return new Promise((resolve, reject) => {
       this.requestQueue.push(async () => {
         try {
@@ -87,49 +88,41 @@ Guidelines:
             await this.sleep(this.RATE_LIMIT_DELAY - timeSinceLastRequest);
           }
 
-          const apiKey = getNextGeminiApiKey();
-          const response = await fetch(this.GEMINI_API_URL, {
+          const apiKey = getNextOpenAiApiKey();
+          const response = await fetch(this.OPENAI_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
+              'Authorization': `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-              contents: [{
-                parts: [{
-                  text: prompt
-                }]
-              }],
-              generationConfig: {
-                temperature: 0.7,
-                topK: 40,
-                topP: 0.95,
-                maxOutputTokens: 1024
-              },
-              safetySettings: [
+              model: this.OPENAI_MODEL,
+              messages: [
                 {
-                  category: "HARM_CATEGORY_HARASSMENT",
-                  threshold: "BLOCK_MEDIUM_AND_ABOVE"
+                  role: 'user',
+                  content: prompt
                 }
-              ]
+              ],
+              temperature: 0.7,
+              max_tokens: 1024
             })
           });
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+            throw new Error(`OpenAI API error: ${errorData.error?.message || response.statusText}`);
           }
 
           const data = await response.json();
           
-          if (data.candidates && data.candidates.length > 0) {
+          if (data.choices && data.choices.length > 0) {
             this.lastRequestTime = Date.now();
             resolve({
-              text: data.candidates[0].content.parts[0].text,
-              tokensUsed: data.usageMetadata?.totalTokenCount || 0
+              text: data.choices[0].message.content,
+              tokensUsed: data.usage?.total_tokens || 0
             });
           } else {
-            throw new Error('No response generated from Gemini API');
+            throw new Error('No response generated from OpenAI API');
           }
 
         } catch (error) {
@@ -141,7 +134,7 @@ Guidelines:
     });
   }
 
-  private parseGeminiResponse(responseText: string): Omit<GeminiResponse, 'tokensUsed' | 'model' | 'processingTime'> {
+  private parseOpenAiResponse(responseText: string): Omit<GeminiResponse, 'tokensUsed' | 'model' | 'processingTime'> {
     try {
       // Clean the response text (remove markdown formatting if present)
       const cleanText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
@@ -209,12 +202,12 @@ Guidelines:
   }
 
   /**
-   * Generate SMS content using Gemini AI
+   * Generate SMS content using OpenAI
    * This method handles SMS-specific prompts and extracts clean SMS text
    */
   async generateSmsContent(prompt: string): Promise<string> {
     try {
-      const response = await this.callGeminiAPI(prompt);
+      const response = await this.callOpenAiAPI(prompt);
       return this.extractSmsFromResponse(response.text);
     } catch (error) {
       this.logger.error('Failed to generate SMS content:', error);

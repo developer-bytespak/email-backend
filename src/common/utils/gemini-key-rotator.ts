@@ -1,20 +1,9 @@
-const GEMINI_KEY_ENV_VARS = [
-  process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-  process.env.GEMINI_API_KEY_4,
-  process.env.GEMINI_API_KEY_5,
-].filter((key): key is string => Boolean(key));
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-let currentKeyIndex = 0;
-
-export function getNextGeminiApiKey(): string {
-  if (GEMINI_KEY_ENV_VARS.length === 0) {
-    throw new Error('Gemini API keys are not configured');
+export function getNextOpenAiApiKey(): string {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OpenAI API key is not configured');
   }
-
-  const apiKey = GEMINI_KEY_ENV_VARS[currentKeyIndex];
-  currentKeyIndex = (currentKeyIndex + 1) % GEMINI_KEY_ENV_VARS.length;
-  return apiKey;
+  return OPENAI_API_KEY;
 }
 
