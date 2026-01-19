@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
 import { LlmClientService } from '../../summarization/llm-client/llm-client.service';
-import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
+import { getNextOpenAiApiKey } from '../../../common/utils/gemini-key-rotator';
 
 export interface SpamCheckResult {
   score: number; // 0-100, higher = more spammy
@@ -224,37 +224,36 @@ Rewrite the email to address the specific spam issues listed above while maintai
 
 Return ONLY valid JSON, no markdown formatting.`;
 
-      // Use existing Gemini integration
-      const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
-      const apiKey = getNextGeminiApiKey();
+      // Use existing OpenAI integration
+      const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
+      const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+      const apiKey = getNextOpenAiApiKey();
 
-      const response = await fetch(GEMINI_API_URL, {
+      const response = await fetch(OPENAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Goog-Api-Key': apiKey,
+          'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 1024
-          }
+          model: OPENAI_MODEL,
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.7,
+          max_tokens: 1024
         })
       });
 
       if (!response.ok) {
-        throw new Error(`Gemini API error: ${response.statusText}`);
+        throw new Error(`OpenAI API error: ${response.statusText}`);
       }
 
       const data = await response.json();
-      const generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      const generatedText = data.choices?.[0]?.message?.content || '';
 
       // Parse JSON response
       let optimized: any;
@@ -263,7 +262,7 @@ Return ONLY valid JSON, no markdown formatting.`;
         const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
         optimized = JSON.parse(jsonMatch ? jsonMatch[0] : cleanText);
       } catch (parseError) {
-        this.logger.warn('Failed to parse Gemini optimization response, using fallback');
+        this.logger.warn('Failed to parse OpenAI optimization response, using fallback');
         optimized = {
           optimizedSubject: subjectLine,
           optimizedBody: originalContent,
@@ -276,7 +275,7 @@ Return ONLY valid JSON, no markdown formatting.`;
         optimizedContent: optimized.optimizedBody || originalContent,
       };
     } catch (error) {
-      this.logger.error('Failed to optimize content with Gemini:', error);
+      this.logger.error('Failed to optimize content with OpenAI:', error);
       return {
         suggestions: ['Failed to generate optimized version. Please edit manually.'],
       };

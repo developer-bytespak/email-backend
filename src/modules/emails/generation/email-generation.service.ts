@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
-import { getNextGeminiApiKey } from '../../../common/utils/gemini-key-rotator';
+import { getNextOpenAiApiKey } from '../../../common/utils/gemini-key-rotator';
 
 export interface EmailGenerationRequest {
   contactId: number;
@@ -224,48 +224,41 @@ export class EmailGenerationService {
             await this.sleep(waitTime);
           }
 
-          const GEMINI_API_URL = process.env.GEMINI_API_URL || 'https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent';
-          const apiKey = getNextGeminiApiKey();
+          const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
+          const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+          const apiKey = getNextOpenAiApiKey();
 
-          const response = await fetch(GEMINI_API_URL, {
+          const response = await fetch(OPENAI_API_URL, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Goog-Api-Key': apiKey,
+              'Authorization': `Bearer ${apiKey}`,
             },
             body: JSON.stringify({
-              contents: [{
-                parts: [{
-                  text: prompt
-                }]
-              }],
-              generationConfig: {
-                temperature: 0.7,
-                topK: 40,
-                topP: 0.95,
-                maxOutputTokens: 1024
-              },
-              safetySettings: [
+              model: OPENAI_MODEL,
+              messages: [
                 {
-                  category: "HARM_CATEGORY_HARASSMENT",
-                  threshold: "BLOCK_MEDIUM_AND_ABOVE"
+                  role: 'user',
+                  content: prompt
                 }
-              ]
+              ],
+              temperature: 0.7,
+              max_tokens: 1024
             })
           });
 
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Gemini API error: ${errorData.error?.message || response.statusText}`);
+            throw new Error(`OpenAI API error: ${errorData.error?.message || response.statusText}`);
           }
 
           const data = await response.json();
 
-          if (data.candidates && data.candidates.length > 0) {
+          if (data.choices && data.choices.length > 0) {
             this.lastRequestTime = Date.now();
             resolve({
-              text: data.candidates[0].content.parts[0].text,
-              tokensUsed: data.usageMetadata?.totalTokenCount || 0
+              text: data.choices[0].message.content,
+              tokensUsed: data.usage?.total_tokens || 0
             });
           } else {
             throw new Error('No response generated from Gemini API');
