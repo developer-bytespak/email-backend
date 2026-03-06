@@ -220,6 +220,16 @@ export class IngestionController {
     return this.ingestionService.updateContact(clientId, contactId, validatedBody);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Delete('csv/:csvId')
+  async deleteCsvUpload(
+    @Request() req,
+    @Param('csvId', ParseIntPipe) csvId: number,
+  ) {
+    const clientId = req.user.id;
+    return this.ingestionService.deleteCsvUpload(clientId, csvId);
+  }
+
   private validateDto<T>(payload: unknown, dtoClass: ClassConstructor<T>): T {
     const instance = plainToInstance(dtoClass, payload, {
       enableImplicitConversion: true,

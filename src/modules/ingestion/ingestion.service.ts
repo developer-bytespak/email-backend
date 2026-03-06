@@ -1101,4 +1101,177 @@ export class IngestionService {
 
     return { deleted: true };
   }
+
+  /**
+   * Delete a CSV upload and ALL associated records (contacts, emails, SMS, etc.)
+   * Uses a PL/pgSQL transaction to ensure atomicity and respect foreign key constraints
+   * Verifies the CSV belongs to the authenticated client before deletion
+   * 
+   * Deletion order (to avoid FK violations):
+   * 1. EmailEngagement (depends on Contact)
+   * 2. EmailUnsubscribe (depends on Contact)
+   * 3. EmailQueue (depends on EmailDraft)
+   * 4. EmailLog (depends on Contact & EmailDraft)
+   * 5. EmailDraft (depends on Contact)
+   * 6. SmsLog (depends on Contact & SmsDraft)
+   * 7. SmsDraft (depends on Contact)
+   * 8. Summary (depends on Contact)
+   * 9. ScrapedData (depends on Contact)
+   * 10. Contact (depends on CsvUpload)
+   * 11. CsvUpload
+   */
+  async deleteCsvUpload(clientId: number, csvId: number): Promise<any> {
+    // Verify the CSV upload exists and belongs to the client
+    const csvUpload = await this.prisma.csvUpload.findFirst({
+      where: {
+        id: csvId,
+        clientId,
+      },
+    });
+
+    if (!csvUpload) {
+      throw new NotFoundException(`CSV upload with ID ${csvId} not found or does not belong to your account`);
+    }
+
+    // Get stats before deletion for response
+    const stats = await this.prisma.$transaction([
+      this.prisma.contact.count({ where: { csvUploadId: csvId } }),
+      this.prisma.emailDraft.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.emailLog.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.smsDraft.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.smsLog.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.summary.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.scrapedData.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.emailEngagement.count({
+        where: {
+          contact: { csvUploadId: csvId },
+        },
+      }),
+      this.prisma.emailQueue.count({
+        where: {
+          emailDraft: {
+            contact: { csvUploadId: csvId },
+          },
+        },
+      }),
+    ]);
+
+    // Execute the deletion using raw SQL for performance
+    // Deletes in correct order to respect foreign key constraints
+    // Using WITH clause for atomicity
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "EmailEngagement" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "EmailUnsubscribe" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      ),
+      csv_drafts AS (
+        SELECT id FROM "EmailDraft" WHERE "contactId" IN (SELECT id FROM csv_contacts)
+      )
+      DELETE FROM "EmailQueue" WHERE "emailDraftId" IN (SELECT id FROM csv_drafts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "EmailLog" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "EmailDraft" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "SmsLog" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "SmsDraft" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "Summary" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      WITH csv_contacts AS (
+        SELECT id FROM "Contact" WHERE "csvUploadId" = ${csvId}
+      )
+      DELETE FROM "ScrapedData" WHERE "contactId" IN (SELECT id FROM csv_contacts);
+    `;
+
+    await this.prisma.$executeRaw`
+      DELETE FROM "Contact" WHERE "csvUploadId" = ${csvId};
+    `;
+
+    await this.prisma.$executeRaw`
+      DELETE FROM "CsvUpload" WHERE id = ${csvId};
+    `;
+
+    return {
+      success: true,
+      message: `CSV upload ${csvId} and all associated records deleted successfully`,
+      csvId,
+      deletedStats: {
+        contacts: stats[0],
+        emailDrafts: stats[1],
+        emailLogs: stats[2],
+        smsDrafts: stats[3],
+        smsLogs: stats[4],
+        summaries: stats[5],
+        scrapedData: stats[6],
+        emailEngagements: stats[7],
+        emailQueues: stats[8],
+      },
+    };
+  }
 }
