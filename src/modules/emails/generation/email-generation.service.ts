@@ -368,6 +368,9 @@ ${servicesText}
 4. Use ${toneInstructions} tone
 5. Keep email 100-180 words, 2-3 paragraphs max
 6. Include soft call-to-action
+7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
+8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+9. Do NOT restate the same benefit or pain point twice anywhere in the email
 
 **OUTPUT FORMAT:**
 {
@@ -417,6 +420,21 @@ ${servicesText}
     if (scrapedData.productsText) {
       const productsPreview = scrapedData.productsText.substring(0, 200);
       details.push(`Products: ${productsPreview}${scrapedData.productsText.length > 200 ? '...' : ''}`);
+    }
+
+    if (scrapedData.solutionsText) {
+      const solutionsPreview = scrapedData.solutionsText.substring(0, 200);
+      details.push(`Solutions: ${solutionsPreview}${scrapedData.solutionsText.length > 200 ? '...' : ''}`);
+    }
+
+    if (scrapedData.featuresText) {
+      const featuresPreview = scrapedData.featuresText.substring(0, 200);
+      details.push(`Features: ${featuresPreview}${scrapedData.featuresText.length > 200 ? '...' : ''}`);
+    }
+
+    if (scrapedData.blogText) {
+      const blogPreview = scrapedData.blogText.substring(0, 200);
+      details.push(`Blog: ${blogPreview}${scrapedData.blogText.length > 200 ? '...' : ''}`);
     }
 
     if (scrapedData.keywords && scrapedData.keywords.length > 0) {

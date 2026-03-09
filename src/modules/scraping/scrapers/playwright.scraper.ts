@@ -263,6 +263,19 @@ export class PlaywrightScraperService {
         // Wait for any JavaScript-rendered content
         await page.waitForTimeout(3000);
         
+        // Check if the site's own JS auto-navigated/redirected us away from the target URL
+        const currentUrl = page.url();
+        const targetUrlNormalized = new URL(fullUrl).pathname.replace(/\/$/, '');
+        const currentUrlNormalized = new URL(currentUrl).pathname.replace(/\/$/, '');
+        if (targetUrlNormalized && currentUrlNormalized !== targetUrlNormalized) {
+          console.log(`[PLAYWRIGHT] Detected auto-redirect: ${fullUrl} → ${currentUrl}. Navigating back to original URL.`);
+          await page.goto(fullUrl, {
+            waitUntil: 'domcontentloaded',
+            timeout: 15000,
+          });
+          await page.waitForTimeout(2000);
+        }
+        
         // Final check - make sure we're not still on a challenge page
         const finalChallengeCheck = await page.evaluate(() => {
           const bodyText = document.body.textContent || '';

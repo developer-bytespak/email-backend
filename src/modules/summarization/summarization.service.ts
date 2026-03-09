@@ -129,6 +129,21 @@ export class SummarizationService {
       contentParts.push(`Products: ${scrapedData.productsText.trim()}`);
     }
 
+    // Add solutions content
+    if (scrapedData.solutionsText && scrapedData.solutionsText.trim()) {
+      contentParts.push(`Solutions: ${scrapedData.solutionsText.trim()}`);
+    }
+
+    // Add features content
+    if (scrapedData.featuresText && scrapedData.featuresText.trim()) {
+      contentParts.push(`Features: ${scrapedData.featuresText.trim()}`);
+    }
+
+    // Add blog content
+    if (scrapedData.blogText && scrapedData.blogText.trim()) {
+      contentParts.push(`Blog: ${scrapedData.blogText.trim()}`);
+    }
+
     // Add contact content
     if (scrapedData.contactText && scrapedData.contactText.trim()) {
       contentParts.push(`Contact: ${scrapedData.contactText.trim()}`);
