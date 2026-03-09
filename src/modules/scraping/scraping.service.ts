@@ -413,6 +413,12 @@ export class ScrapingService {
           servicesHtml: scrapedData.servicesHtml,
           productsText: scrapedData.productsText,
           productsHtml: scrapedData.productsHtml,
+          solutionsText: scrapedData.solutionsText,
+          solutionsHtml: scrapedData.solutionsHtml,
+          featuresText: scrapedData.featuresText,
+          featuresHtml: scrapedData.featuresHtml,
+          blogText: scrapedData.blogText,
+          blogHtml: scrapedData.blogHtml,
           contactText: scrapedData.contactText,
           contactHtml: scrapedData.contactHtml,
           extractedEmails: scrapedData.extractedEmails || [],
@@ -739,6 +745,12 @@ export class ScrapingService {
         servicesHtml: additionalPages.services?.html || null,
         productsText: additionalPages.products?.content || null,
         productsHtml: additionalPages.products?.html || null,
+        solutionsText: additionalPages.solutions?.content || null,
+        solutionsHtml: additionalPages.solutions?.html || null,
+        featuresText: additionalPages.features?.content || null,
+        featuresHtml: additionalPages.features?.html || null,
+        blogText: additionalPages.blog?.content || null,
+        blogHtml: additionalPages.blog?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
         extractedEmails: extractedEmails, // Enriched with contact page emails if needed
@@ -838,6 +850,12 @@ export class ScrapingService {
         servicesHtml: additionalPages.services?.html || null,
         productsText: additionalPages.products?.content || null,
         productsHtml: additionalPages.products?.html || null,
+        solutionsText: additionalPages.solutions?.content || null,
+        solutionsHtml: additionalPages.solutions?.html || null,
+        featuresText: additionalPages.features?.content || null,
+        featuresHtml: additionalPages.features?.html || null,
+        blogText: additionalPages.blog?.content || null,
+        blogHtml: additionalPages.blog?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
         extractedEmails: extractedEmails, // Enriched with contact page emails if needed
@@ -961,6 +979,12 @@ export class ScrapingService {
         servicesHtml: additionalPages.services?.html || null,
         productsText: additionalPages.products?.content || null,
         productsHtml: additionalPages.products?.html || null,
+        solutionsText: additionalPages.solutions?.content || null,
+        solutionsHtml: additionalPages.solutions?.html || null,
+        featuresText: additionalPages.features?.content || null,
+        featuresHtml: additionalPages.features?.html || null,
+        blogText: additionalPages.blog?.content || null,
+        blogHtml: additionalPages.blog?.html || null,
         contactText: additionalPages.contact?.content || null,
         contactHtml: additionalPages.contact?.html || null,
         extractedEmails: extractedEmails, // Enriched with contact page emails if needed
@@ -1150,11 +1174,9 @@ export class ScrapingService {
       const pageUrls = this.findPageUrls(baseUrl, navLinksWithLabels);
       console.log(`[SCRAPE] Mapped pages:`, Object.keys(pageUrls));
       
-      // If no pages found through links, try common URL patterns
+      // If no pages found through links, log it and proceed — don't guess URLs
       if (Object.keys(pageUrls).length === 0) {
-        console.log(`[SCRAPE] No pages found through links, trying common URL patterns`);
-        const commonUrls = this.generateCommonUrls(baseUrl);
-        Object.assign(pageUrls, commonUrls);
+        console.log(`[SCRAPE] No matching pages found in navigation links — only homepage will be scraped`);
       }
       
       // Scrape each discovered page
@@ -1235,29 +1257,18 @@ export class ScrapingService {
       services: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/services`,
       products: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/products`,
       contact: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/contact`,
+      solutions: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/solutions`,
+      features: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/features`,
+      blog: `${baseUrlObj.protocol}//${baseUrlObj.host}${basePath}/blog`,
     };
   }
 
   /**
-   * Simple fuzzy matching for URL patterns
+   * Fuzzy matching disabled — character-level comparison caused false positives
+   * (e.g., /why-choose-us matched /services because they share letters s,e,c,o,u)
    */
-  private fuzzyMatch(pathname: string, pattern: string): boolean {
-    const cleanPath = pathname.replace(/[^a-z]/g, '');
-    const cleanPattern = pattern.replace(/[^a-z]/g, '');
-    
-    // Check if pattern words are contained in pathname
-    const patternWords = cleanPattern.split('').filter(char => char !== '');
-    const pathWords = cleanPath.split('').filter(char => char !== '');
-    
-    // Simple similarity check
-    let matches = 0;
-    for (const word of patternWords) {
-      if (pathWords.includes(word)) {
-        matches++;
-      }
-    }
-    
-    return matches >= Math.min(3, patternWords.length);
+  private fuzzyMatch(_pathname: string, _pattern: string): boolean {
+    return false;
   }
 
   /**
@@ -1266,6 +1277,7 @@ export class ScrapingService {
   private findPageUrls(baseUrl: string, links: string[] | Array<{url: string, label: string, source: string}>): any {
     const baseDomain = new URL(baseUrl).hostname;
     const pageUrls: any = {};
+    const assignedUrls = new Set<string>(); // Track URLs already assigned to prevent duplicates
     
     // Convert to unified format if needed
     const linksWithLabels: Array<{url: string, label: string, source: string}> = links.map(link => {
@@ -1280,11 +1292,11 @@ export class ScrapingService {
       services: {
         urlPatterns: [
           '/services', '/service', '/what-we-do', '/our-services',
-          '/offerings', '/solutions', '/expertise', '/capabilities',
+          '/offerings', '/expertise', '/capabilities',
           '/what-we-offer', '/our-work', '/specialties', '/practice-areas'
         ],
         labelKeywords: ['service', 'services', 'what we do', 'our services', 'offerings', 
-                       'solutions', 'expertise', 'capabilities', 'specialties', 'practice']
+                       'expertise', 'capabilities', 'specialties', 'practice']
       },
       products: {
         urlPatterns: [
@@ -1300,8 +1312,29 @@ export class ScrapingService {
           '/contact', '/contact-us', '/get-in-touch', '/reach-us',
           '/location', '/locations', '/office', '/offices'
         ],
-        labelKeywords: ['contact', 'get in touch', 'reach us', 'reach out', 
-                       'connect', 'location', 'office', 'address', 'about us', 'about']
+        labelKeywords: ['contact', 'contact us', 'get in touch', 'reach us', 'reach out', 
+                       'location', 'office', 'address']
+      },
+      solutions: {
+        urlPatterns: [
+          '/solutions', '/solution', '/our-solutions', '/platform-solutions',
+          '/business-solutions'
+        ],
+        labelKeywords: ['solution', 'solutions', 'our solutions']
+      },
+      features: {
+        urlPatterns: [
+          '/features', '/feature', '/product-features', '/platform-features'
+        ],
+        labelKeywords: ['feature', 'features', 'product features', 'platform features']
+      },
+      blog: {
+        urlPatterns: [
+          '/blog', '/blogs', '/articles', '/insights',
+          '/news', '/resources'
+        ],
+        labelKeywords: ['blog', 'blogs', 'article', 'articles', 'insight', 'insights',
+                       'news', 'resource', 'resources']
       }
     };
     
@@ -1325,88 +1358,47 @@ export class ScrapingService {
         
         // Check if link is from same domain
         if (linkUrl.hostname === baseDomain) {
-          // Check for services pages
-          if (!pageUrls.services) {
+          // Skip if this URL is already assigned to another page type
+          const normalizedLinkUrl = link.url.replace(/\/$/, '').toLowerCase();
+          if (assignedUrls.has(normalizedLinkUrl)) {
+            continue;
+          }
+
+          // Try to match this link against each page type
+          const pageTypes = ['services', 'products', 'contact', 'solutions', 'features', 'blog'] as const;
+          
+          for (const pageType of pageTypes) {
+            if (pageUrls[pageType]) continue; // Already found this page type
+            
+            const patterns = pagePatterns[pageType];
             let matched = false;
             
             // First check label keywords (strongest signal)
-            for (const keyword of pagePatterns.services.labelKeywords) {
+            for (const keyword of patterns.labelKeywords) {
               if (label.includes(keyword)) {
-                pageUrls.services = link.url;
-                console.log(`[SCRAPE] Mapped services page by label "${link.label}": ${link.url}`);
+                pageUrls[pageType] = link.url;
+                assignedUrls.add(normalizedLinkUrl);
+                console.log(`[SCRAPE] Mapped ${pageType} page by label "${link.label}": ${link.url}`);
                 matched = true;
                 break;
               }
             }
             
-            // If no label match, check URL patterns
+            // If no label match, check URL patterns (exact path segment match only)
             if (!matched) {
-              for (const pattern of pagePatterns.services.urlPatterns) {
+              for (const pattern of patterns.urlPatterns) {
                 if (pathname.includes(pattern) || 
-                    pathname.includes(pattern.replace('/', '')) ||
-                    this.fuzzyMatch(pathname, pattern)) {
-                  pageUrls.services = link.url;
-                  console.log(`[SCRAPE] Mapped services page by URL pattern: ${link.url}`);
+                    pathname.includes(pattern.replace('/', ''))) {
+                  pageUrls[pageType] = link.url;
+                  assignedUrls.add(normalizedLinkUrl);
+                  console.log(`[SCRAPE] Mapped ${pageType} page by URL pattern: ${link.url}`);
+                  matched = true;
                   break;
                 }
               }
             }
-          }
-          
-          // Check for products pages
-          if (!pageUrls.products) {
-            let matched = false;
             
-            // First check label keywords
-            for (const keyword of pagePatterns.products.labelKeywords) {
-              if (label.includes(keyword)) {
-                pageUrls.products = link.url;
-                console.log(`[SCRAPE] Mapped products page by label "${link.label}": ${link.url}`);
-                matched = true;
-                break;
-              }
-            }
-            
-            // If no label match, check URL patterns
-            if (!matched) {
-              for (const pattern of pagePatterns.products.urlPatterns) {
-                if (pathname.includes(pattern) || 
-                    pathname.includes(pattern.replace('/', '')) ||
-                    this.fuzzyMatch(pathname, pattern)) {
-                  pageUrls.products = link.url;
-                  console.log(`[SCRAPE] Mapped products page by URL pattern: ${link.url}`);
-                  break;
-                }
-              }
-            }
-          }
-          
-          // Check for contact pages
-          if (!pageUrls.contact) {
-            let matched = false;
-            
-            // First check label keywords
-            for (const keyword of pagePatterns.contact.labelKeywords) {
-              if (label.includes(keyword)) {
-                pageUrls.contact = link.url;
-                console.log(`[SCRAPE] Mapped contact page by label "${link.label}": ${link.url}`);
-                matched = true;
-                break;
-              }
-            }
-            
-            // If no label match, check URL patterns
-            if (!matched) {
-              for (const pattern of pagePatterns.contact.urlPatterns) {
-                if (pathname.includes(pattern) || 
-                    pathname.includes(pattern.replace('/', '')) ||
-                    this.fuzzyMatch(pathname, pattern)) {
-                  pageUrls.contact = link.url;
-                  console.log(`[SCRAPE] Mapped contact page by URL pattern: ${link.url}`);
-                  break;
-                }
-              }
-            }
+            if (matched) break; // This link matched a page type, move to next link
           }
         }
       } catch (error) {

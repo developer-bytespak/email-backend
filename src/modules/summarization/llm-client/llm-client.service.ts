@@ -74,6 +74,8 @@ Guidelines:
 - Suggest concrete opportunities for service providers
 - Extract relevant business keywords for targeting
 - Keep each array item concise but specific
+- Each pain point, strength, and opportunity must be unique — do NOT repeat the same idea in different words
+- Do NOT list generic filler items; only include genuinely distinct insights
 - Ensure JSON is valid and properly formatted
 `;
   }

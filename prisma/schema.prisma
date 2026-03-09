@@ -1,12 +1,11 @@
-// schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
-}
-
-generator client {
-  provider = "prisma-client-js"
 }
 
 model Client {
@@ -20,15 +19,15 @@ model Client {
   hashPassword        String
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @default(now()) @updatedAt
+  clientEmails        ClientEmail[]
+  clientSms           ClientSms[]
   csvUploads          CsvUpload[]
   emailDrafts         EmailDraft[]
   emailLogs           EmailLog[]
   products            ProductService[]
-  clientEmails        ClientEmail[]
-  clientSms           ClientSms[]
+  senderVerifications SenderVerification[]
   smsDrafts           SmsDraft[]
   smsLogs             SmsLog[]
-  senderVerifications SenderVerification[]
 }
 
 model CsvUpload {
@@ -39,60 +38,309 @@ model CsvUpload {
   totalRecords      Int
   successfulRecords Int
   description       String?
-  rawData           Json? // Full CSV data in JSON format
   createdAt         DateTime        @default(now())
-  client            Client          @relation(fields: [clientId], references: [id])
+  rawData           Json?
   contacts          Contact[]
+  client            Client          @relation(fields: [clientId], references: [id])
 
-  @@index([clientId]) // Critical for JOIN performance in scraping history queries
+  @@index([clientId])
+}
+
+model Contact {
+  id                Int               @id @default(autoincrement())
+  csvUploadId       Int
+  businessName      String
+  email             String?
+  phone             String?
+  website           String?
+  status            ContactStatus     @default(new)
+  valid             Boolean           @default(false)
+  validationReason  String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @default(now()) @updatedAt
+  businessNameValid Boolean           @default(false)
+  emailValid        Boolean           @default(false)
+  scrapeMethod      ScrapeMethod?
+  scrapePriority    Int?
+  state             String?
+  websiteValid      Boolean           @default(false)
+  zipCode           String?
+  csvUpload         CsvUpload         @relation(fields: [csvUploadId], references: [id])
+  emailDrafts       EmailDraft[]
+  emailEngagements  EmailEngagement[]
+  emailLogs         EmailLog[]
+  emailUnsubscribe  EmailUnsubscribe?
+  scrapedData       ScrapedData[]
+  smsDrafts         SmsDraft[]
+  smsLogs           SmsLog[]
+  summaries         Summary[]
+
+  @@index([csvUploadId, businessName])
+}
+
+model Summary {
+  id            Int          @id @default(autoincrement())
+  contactId     Int
+  summaryText   String
+  createdAt     DateTime     @default(now())
+  aiModel       String       @default("gemini-2.0-flash-lite")
+  keywords      String[]
+  opportunities String[]
+  scrapedDataId Int?
+  strengths     String[]
+  updatedAt     DateTime     @default(now()) @updatedAt
+  painPoints    String[]
+  EmailDraft    EmailDraft[]
+  SmsDraft      SmsDraft[]
+  contact       Contact      @relation(fields: [contactId], references: [id])
+  scrapedData   ScrapedData? @relation(fields: [scrapedDataId], references: [id])
+}
+
+model EmailDraft {
+  id               Int              @id @default(autoincrement())
+  clientEmailId    Int?
+  contactId        Int
+  clientId         Int
+  summaryId        Int
+  bodyText         String
+  icebreaker       String?
+  productsRelevant String?
+  status           EmailDraftStatus @default(draft)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now()) @updatedAt
+  subjectLines     String[]
+  clientEmail      ClientEmail?     @relation(fields: [clientEmailId], references: [id], onDelete: Restrict)
+  Client           Client           @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  contact          Contact          @relation(fields: [contactId], references: [id])
+  summary          Summary          @relation(fields: [summaryId], references: [id])
+  EmailLog         EmailLog[]
+  EmailQueue       EmailQueue?
+}
+
+model EmailLog {
+  id                 Int                @id @default(autoincrement())
+  emailDraftId       Int
+  contactId          Int
+  clientId           Int?
+  status             EmailLogStatus
+  providerResponse   Json?
+  sentAt             DateTime
+  deliveredAt        DateTime?
+  messageId          String?            @unique
+  sentVia            String             @default("sendgrid")
+  spamScore          Int?
+  trackingPixelToken String?            @unique
+  unsubscribeToken   String?            @unique
+  customArgs         Json?
+  deferredAt         DateTime?
+  processedAt        DateTime?
+  retryAttempt       Int?
+  smtpId             String?
+  templateId         String?
+  emailEngagements   EmailEngagement[]
+  Client             Client?            @relation(fields: [clientId], references: [id])
+  contact            Contact            @relation(fields: [contactId], references: [id])
+  emailDraft         EmailDraft         @relation(fields: [emailDraftId], references: [id])
+  emailUnsubscribes  EmailUnsubscribe[]
+}
+
+model ProductService {
+  id           Int                 @id @default(autoincrement())
+  clientId     Int
+  type         ProductServiceType?
+  name         String
+  description  String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @default(now()) @updatedAt
+  businessName String
+  client       Client              @relation(fields: [clientId], references: [id])
+}
+
+model ClientEmail {
+  id                  Int                      @id @default(autoincrement())
+  clientId            Int
+  emailAddress        String
+  providerSettings    String?
+  status              ClientEmailStatus        @default(active)
+  mailerTestScore     Decimal?                 @db.Decimal(5, 2)
+  totalCounter        Int                      @default(0)
+  currentCounter      Int                      @default(0)
+  timestamp           DateTime?
+  limit               Int                      @default(100)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @default(now()) @updatedAt
+  sendgridApiKey      String?
+  lastOtpSentAt       DateTime?
+  verificationMethod  VerificationMethod       @default(otp)
+  verificationStatus  SenderVerificationStatus @default(pending)
+  verifiedAt          DateTime?
+  client              Client                   @relation(fields: [clientId], references: [id])
+  EmailDraft          EmailDraft[]
+  senderVerifications SenderVerification?
+}
+
+model ClientSms {
+  id                  Int                      @id @default(autoincrement())
+  clientId            Int
+  phoneNumber         String
+  providerSettings    String?
+  status              ClientSmsStatus          @default(active)
+  totalCounter        Int                      @default(0)
+  currentCounter      Int                      @default(0)
+  timestamp           DateTime?
+  limit               Int?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @default(now()) @updatedAt
+  lastOtpSentAt       DateTime?
+  verificationMethod  VerificationMethod       @default(otp)
+  verificationStatus  SenderVerificationStatus @default(pending)
+  verifiedAt          DateTime?
+  client              Client                   @relation(fields: [clientId], references: [id])
+  senderVerifications SenderVerification?
+  smsDrafts           SmsDraft[]
+  smsLogs             SmsLog[]
+}
+
+model SmsDraft {
+  id               Int            @id @default(autoincrement())
+  contactId        Int
+  summaryId        Int?
+  messageText      String
+  productsRelevant String?
+  status           SmsDraftStatus @default(draft)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @default(now()) @updatedAt
+  clientId         Int
+  clientSmsId      Int?
+  Client           Client         @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  clientSms        ClientSms?     @relation(fields: [clientSmsId], references: [id])
+  contact          Contact        @relation(fields: [contactId], references: [id])
+  summary          Summary?       @relation(fields: [summaryId], references: [id])
+  SmsLog           SmsLog[]
+}
+
+model SmsLog {
+  id               Int          @id @default(autoincrement())
+  smsDraftId       Int
+  contactId        Int
+  clientId         Int?
+  status           SmsLogStatus
+  providerResponse Json?
+  sentAt           DateTime
+  clientSmsId      Int?
+  Client           Client?      @relation(fields: [clientId], references: [id])
+  clientSms        ClientSms?   @relation(fields: [clientSmsId], references: [id])
+  contact          Contact      @relation(fields: [contactId], references: [id])
+  smsDraft         SmsDraft     @relation(fields: [smsDraftId], references: [id])
+}
+
+model ScrapedData {
+  id              Int          @id @default(autoincrement())
+  contactId       Int
+  method          ScrapeMethod
+  url             String
+  searchQuery     String?
+  discoveredUrl   String?
+  homepageText    String?
+  servicesText    String?
+  productsText    String?
+  contactText     String?
+  homepageHtml    String?
+  servicesHtml    String?
+  productsHtml    String?
+  contactHtml     String?
+  extractedEmails String[]
+  extractedPhones String[]
+  pageTitle       String?
+  metaDescription String?
+  keywords        String[]
+  scrapeSuccess   Boolean      @default(false)
+  errorMessage    String?
+  scrapedAt       DateTime     @default(now())
+  solutionsText   String?
+  solutionsHtml   String?
+  featuresText    String?
+  featuresHtml    String?
+  blogText        String?
+  blogHtml        String?
+  contact         Contact      @relation(fields: [contactId], references: [id])
+  summaries       Summary[]
+
+  @@index([contactId, scrapedAt])
+  @@index([scrapeSuccess])
+  @@index([method, scrapedAt])
+}
+
+model EmailEngagement {
+  id             Int            @id @default(autoincrement())
+  emailLogId     Int
+  contactId      Int
+  engagementType EngagementType
+  engagedAt      DateTime       @default(now())
+  url            String?
+  contact        Contact        @relation(fields: [contactId], references: [id])
+  emailLog       EmailLog       @relation(fields: [emailLogId], references: [id], onDelete: Cascade)
+
+  @@index([emailLogId])
+  @@index([contactId])
+  @@index([engagementType, engagedAt])
+}
+
+model SenderVerification {
+  id                 Int                      @id @default(autoincrement())
+  senderType         SenderType
+  clientEmailId      Int?                     @unique(map: "senderVerification_clientEmailId_key")
+  clientSmsId        Int?                     @unique(map: "senderVerification_clientSmsId_key")
+  otpHash            String
+  otpExpiresAt       DateTime
+  attemptCount       Int                      @default(0)
+  status             SenderVerificationStatus @default(pending)
+  verificationMethod VerificationMethod       @default(otp)
+  verifiedAt         DateTime?
+  lastOtpSentAt      DateTime?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @default(now()) @updatedAt
+  clientId           Int
+  emailAddress       String?
+  phoneNumber        String?
+  clientEmail        ClientEmail?             @relation(fields: [clientEmailId], references: [id])
+  client             Client                   @relation(fields: [clientId], references: [id])
+  clientSms          ClientSms?               @relation(fields: [clientSmsId], references: [id])
+
+  @@index([clientId, emailAddress, status])
+  @@index([clientId, phoneNumber, status])
+}
+
+model EmailUnsubscribe {
+  id                    Int       @id @default(autoincrement())
+  contactId             Int       @unique
+  unsubscribeEmailLogId Int?
+  unsubscribedAt        DateTime  @default(now())
+  reason                String?
+  contact               Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  emailLog              EmailLog? @relation(fields: [unsubscribeEmailLogId], references: [id])
+
+  @@index([contactId])
+}
+
+model EmailQueue {
+  id           Int              @id @default(autoincrement())
+  emailDraftId Int              @unique
+  scheduledAt  DateTime
+  status       EmailQueueStatus @default(pending)
+  retryCount   Int              @default(0)
+  nextRetryAt  DateTime?
+  priority     Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @default(now()) @updatedAt
+  emailDraft   EmailDraft       @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledAt, priority])
 }
 
 enum CsvUploadStatus {
   success
   failure
-}
-
-model Contact {
-  id           Int     @id @default(autoincrement())
-  csvUploadId  Int
-  businessName String
-  email        String?
-  phone        String?
-  website      String?
-  state        String?
-  zipCode      String?
-
-  // Validation flags for each field
-  businessNameValid Boolean @default(false)
-  emailValid        Boolean @default(false)
-  websiteValid      Boolean @default(false)
-
-  // Overall validity and reason
-  valid            Boolean @default(false)
-  validationReason String?
-
-  // Scraping strategy
-  scrapeMethod   ScrapeMethod?
-  scrapePriority Int?
-
-  // Workflow status
-  status    ContactStatus @default(new)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @default(now()) @updatedAt
-
-  csvUpload   CsvUpload     @relation(fields: [csvUploadId], references: [id])
-  summaries   Summary[]
-  emailDrafts EmailDraft[]
-  scrapedData ScrapedData[]
-  smsDrafts   SmsDraft[]
-  emailLogs   EmailLog[]
-  smsLogs     SmsLog[]
-
-  // NEW RELATIONS:
-  emailEngagements EmailEngagement[]
-  emailUnsubscribe EmailUnsubscribe?
-
-  @@index([csvUploadId, businessName])
 }
 
 enum ContactStatus {
@@ -115,108 +363,23 @@ enum ScrapeMethod {
   business_search
 }
 
-model Summary {
-  id            Int          @id @default(autoincrement())
-  contactId     Int
-  scrapedDataId Int? // Link to specific scraped data
-  summaryText   String // AI-generated business summary
-  painPoints    String[] // Array of identified pain points
-  strengths     String[] // Array of business strengths
-  opportunities String[] // Array of service opportunities
-  keywords      String[] // Array of relevant keywords
-  aiModel       String       @default("gemini-2.0-flash-lite") // AI model used
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @default(now()) @updatedAt
-  contact       Contact      @relation(fields: [contactId], references: [id])
-  scrapedData   ScrapedData? @relation(fields: [scrapedDataId], references: [id])
-  EmailDraft    EmailDraft[]
-  SmsDraft      SmsDraft[]
-}
-
-model EmailDraft {
-  id               Int              @id @default(autoincrement())
-  clientEmailId    Int?
-  contactId        Int
-  summaryId        Int
-  subjectLines     String[]
-  bodyText         String
-  icebreaker       String?
-  productsRelevant String?
-  status           EmailDraftStatus @default(draft)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @default(now()) @updatedAt
-  clientEmail      ClientEmail?     @relation(fields: [clientEmailId], references: [id])
-  contact          Contact          @relation(fields: [contactId], references: [id])
-  summary          Summary          @relation(fields: [summaryId], references: [id])
-  EmailLog         EmailLog[]
-  EmailQueue       EmailQueue?
-  Client           Client           @relation(fields: [clientId], references: [id])
-  clientId         Int
-}
-
 enum EmailDraftStatus {
   draft
   ready
   sent
 }
 
-model EmailLog {
-  id               Int            @id @default(autoincrement())
-  emailDraftId     Int
-  contactId        Int
-  status           EmailLogStatus
-  providerResponse Json?
-  sentAt           DateTime
-
-  // NEW FIELDS:
-  messageId          String?   @unique // SendGrid message ID
-  trackingPixelToken String?   @unique // Token for custom pixel (backup)
-  unsubscribeToken   String?   @unique // Token for unsubscribe link
-  sentVia            String    @default("sendgrid")
-  deliveredAt        DateTime?
-  spamScore          Int? // Pre-send score (0-100)
-
-  // Webhook event tracking fields
-  processedAt  DateTime? // When SendGrid processed it
-  deferredAt   DateTime? // When email was deferred
-  retryAttempt Int? // Retry attempt number (for deferred events)
-  smtpId       String? // SMTP transaction ID
-  templateId   String? // SendGrid template ID
-  customArgs   Json? // Custom arguments as JSON
-
-  emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id])
-  contact    Contact    @relation(fields: [contactId], references: [id])
-  Client     Client?    @relation(fields: [clientId], references: [id])
-  clientId   Int?
-
-  // NEW RELATIONS:
-  emailEngagements  EmailEngagement[]
-  emailUnsubscribes EmailUnsubscribe[]
-}
-
 enum EmailLogStatus {
   success
   failed
   bounced
-  pending // NEW
-  processed // NEW: SendGrid accepted and queued the email
-  deferred // NEW: Temporary failure, retrying
-  delivered // NEW
-  blocked // NEW
-  dropped // NEW
-  spamreport // NEW
-}
-
-model ProductService {
-  id           Int                 @id @default(autoincrement())
-  clientId     Int
-  type         ProductServiceType?
-  name         String
-  businessName String
-  description  String?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @default(now()) @updatedAt
-  client       Client              @relation(fields: [clientId], references: [id])
+  pending
+  delivered
+  blocked
+  dropped
+  spamreport
+  processed
+  deferred
 }
 
 enum ProductServiceType {
@@ -224,58 +387,9 @@ enum ProductServiceType {
   service
 }
 
-model ClientEmail {
-  id                 Int                      @id @default(autoincrement())
-  clientId           Int
-  emailAddress       String
-  providerSettings   String?
-  status             ClientEmailStatus        @default(active)
-  verificationStatus SenderVerificationStatus @default(pending)
-  verificationMethod VerificationMethod       @default(otp)
-  verifiedAt         DateTime?
-  lastOtpSentAt      DateTime?
-  mailerTestScore    Decimal?                 @db.Decimal(5, 2)
-  totalCounter       Int                      @default(0)
-  currentCounter     Int                      @default(0)
-  timestamp          DateTime?
-  limit              Int                      @default(100)
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @default(now()) @updatedAt
-
-  // NEW FIELDS:
-  sendgridApiKey String? // Encrypted SendGrid API key (per email account)
-
-  client              Client               @relation(fields: [clientId], references: [id])
-  EmailDraft          EmailDraft[]
-  senderVerifications SenderVerification[]
-}
-
 enum ClientEmailStatus {
   active
   inactive
-}
-
-model ClientSms {
-  id                 Int                      @id @default(autoincrement())
-  clientId           Int
-  phoneNumber        String
-  providerSettings   String?
-  status             ClientSmsStatus          @default(active)
-  verificationStatus SenderVerificationStatus @default(pending)
-  verificationMethod VerificationMethod       @default(otp)
-  verifiedAt         DateTime?
-  lastOtpSentAt      DateTime?
-  totalCounter       Int                      @default(0)
-  currentCounter     Int                      @default(0)
-  timestamp          DateTime?
-  limit              Int? // Optional - null means no limit enforcement
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @default(now()) @updatedAt
-
-  client              Client               @relation(fields: [clientId], references: [id])
-  smsDrafts           SmsDraft[]
-  smsLogs             SmsLog[]
-  senderVerifications SenderVerification[]
 }
 
 enum ClientSmsStatus {
@@ -283,43 +397,10 @@ enum ClientSmsStatus {
   inactive
 }
 
-model SmsDraft {
-  id               Int            @id @default(autoincrement())
-  contactId        Int
-  summaryId        Int?
-  clientSmsId      Int?
-  messageText      String
-  productsRelevant String?
-  status           SmsDraftStatus @default(draft)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @default(now()) @updatedAt
-  contact          Contact        @relation(fields: [contactId], references: [id])
-  summary          Summary?       @relation(fields: [summaryId], references: [id])
-  SmsLog           SmsLog[]
-  Client           Client         @relation(fields: [clientId], references: [id])
-  clientId         Int
-  clientSms        ClientSms?     @relation(fields: [clientSmsId], references: [id])
-}
-
 enum SmsDraftStatus {
   draft
   ready
   sent
-}
-
-model SmsLog {
-  id               Int          @id @default(autoincrement())
-  smsDraftId       Int
-  contactId        Int
-  clientSmsId      Int?
-  status           SmsLogStatus
-  providerResponse Json?
-  sentAt           DateTime
-  smsDraft         SmsDraft     @relation(fields: [smsDraftId], references: [id])
-  contact          Contact      @relation(fields: [contactId], references: [id])
-  Client           Client?      @relation(fields: [clientId], references: [id])
-  clientId         Int?
-  clientSms        ClientSms?   @relation(fields: [clientSmsId], references: [id])
 }
 
 enum SmsLogStatus {
@@ -329,100 +410,9 @@ enum SmsLogStatus {
   undelivered
 }
 
-model ScrapedData {
-  id            Int          @id @default(autoincrement())
-  contactId     Int
-  method        ScrapeMethod
-  url           String
-  searchQuery   String?
-  discoveredUrl String?
-
-  // Scraped content (clean text for AI processing)
-  homepageText String?
-  servicesText String?
-  productsText String?
-  contactText  String?
-
-  // Raw HTML content (for SEO analysis and reference)
-  homepageHtml String?
-  servicesHtml String?
-  productsHtml String?
-  contactHtml  String?
-
-  // Extracted data
-  extractedEmails String[]
-  extractedPhones String[]
-
-  // Metadata
-  pageTitle       String?
-  metaDescription String?
-  keywords        String[]
-
-  // Status and timing
-  scrapeSuccess Boolean  @default(false)
-  errorMessage  String?
-  scrapedAt     DateTime @default(now())
-
-  // Relations
-  contact   Contact   @relation(fields: [contactId], references: [id])
-  summaries Summary[]
-
-  @@index([contactId, scrapedAt], map: "ScrapedData_contactId_scrapedAt_idx")
-  @@index([scrapeSuccess], map: "ScrapedData_scrapeSuccess_idx")
-  @@index([method, scrapedAt], map: "ScrapedData_method_scrapedAt_idx")
-}
-
-// ==========================================
-// NEW TABLES FOR EMAIL AUTOMATION
-// ==========================================
-
-model EmailEngagement {
-  id             Int            @id @default(autoincrement())
-  emailLogId     Int
-  contactId      Int
-  engagementType EngagementType // 'open' OR 'click' - separate records per event
-  engagedAt      DateTime       @default(now())
-  url            String? // Only for clicks - original URL clicked
-
-  emailLog EmailLog @relation(fields: [emailLogId], references: [id], onDelete: Cascade)
-  contact  Contact  @relation(fields: [contactId], references: [id])
-
-  @@index([emailLogId])
-  @@index([contactId])
-  @@index([engagementType, engagedAt])
-}
-
 enum EngagementType {
-  open // Created when tracking pixel loads or SendGrid webhook
-  click // Created when link is clicked or SendGrid webhook
-}
-
-model SenderVerification {
-  id                 Int                      @id @default(autoincrement())
-  senderType         SenderType
-  clientId           Int // Store clientId for temporary verifications
-  clientEmailId      Int?
-  clientSmsId        Int?
-  emailAddress       String? // Temporary storage before ClientEmail is created
-  phoneNumber        String? // Temporary storage before ClientSms is created
-  otpHash            String
-  otpExpiresAt       DateTime
-  attemptCount       Int                      @default(0)
-  status             SenderVerificationStatus @default(pending)
-  verificationMethod VerificationMethod       @default(otp)
-  verifiedAt         DateTime?
-  lastOtpSentAt      DateTime?
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @default(now()) @updatedAt
-
-  client      Client       @relation(fields: [clientId], references: [id])
-  clientEmail ClientEmail? @relation(fields: [clientEmailId], references: [id])
-  clientSms   ClientSms?   @relation(fields: [clientSmsId], references: [id])
-
-  @@unique([clientEmailId], map: "senderVerification_clientEmailId_key")
-  @@unique([clientSmsId], map: "senderVerification_clientSmsId_key")
-  @@index([clientId, emailAddress, status]) // For finding pending email verifications
-  @@index([clientId, phoneNumber, status]) // For finding pending SMS verifications
+  open
+  click
 }
 
 enum SenderType {
@@ -439,35 +429,6 @@ enum SenderVerificationStatus {
 
 enum VerificationMethod {
   otp
-}
-
-model EmailUnsubscribe {
-  id                    Int      @id @default(autoincrement())
-  contactId             Int      @unique // One unsubscribe per contact
-  unsubscribeEmailLogId Int? // Which email triggered unsubscribe
-  unsubscribedAt        DateTime @default(now())
-  reason                String? // Optional reason
-
-  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  emailLog EmailLog? @relation(fields: [unsubscribeEmailLogId], references: [id])
-
-  @@index([contactId])
-}
-
-model EmailQueue {
-  id           Int              @id @default(autoincrement())
-  emailDraftId Int              @unique // One queue entry per draft
-  scheduledAt  DateTime
-  status       EmailQueueStatus @default(pending)
-  retryCount   Int              @default(0)
-  nextRetryAt  DateTime? // When to retry if failed
-  priority     Int              @default(0) // Lower = higher priority (FIFO)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @default(now()) @updatedAt
-
-  emailDraft EmailDraft @relation(fields: [emailDraftId], references: [id], onDelete: Cascade)
-
-  @@index([status, scheduledAt, priority]) // For FIFO queue queries
 }
 
 enum EmailQueueStatus {
