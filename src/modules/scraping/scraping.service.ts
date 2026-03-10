@@ -1174,9 +1174,27 @@ export class ScrapingService {
       const pageUrls = this.findPageUrls(baseUrl, navLinksWithLabels);
       console.log(`[SCRAPE] Mapped pages:`, Object.keys(pageUrls));
       
-      // If no pages found through links, log it and proceed — don't guess URLs
-      if (Object.keys(pageUrls).length === 0) {
-        console.log(`[SCRAPE] No matching pages found in navigation links — only homepage will be scraped`);
+      // If no pages found through links, try extracting sections from #hash anchors (single-page sites)
+      if (Object.keys(pageUrls).length === 0 && homepageData.html) {
+        console.log(`[SCRAPE] No pages found through links, checking for #hash sections (single-page site)...`);
+        const hashSections = this.extractHashSections(homepageData.html, baseUrl);
+        
+        for (const [pageType, sectionData] of Object.entries(hashSections)) {
+          additionalPages[pageType] = {
+            content: sectionData.content,
+            html: sectionData.html,
+            title: `${pageType} section`,
+            url: sectionData.url,
+            extractedEmails: [],
+            extractedPhones: []
+          };
+        }
+        
+        if (Object.keys(hashSections).length > 0) {
+          console.log(`[SCRAPE] Extracted ${Object.keys(hashSections).length} sections from single-page site:`, Object.keys(hashSections));
+        } else {
+          console.log(`[SCRAPE] No matching hash sections found — only homepage will be scraped`);
+        }
       }
       
       // Scrape each discovered page
@@ -1244,6 +1262,122 @@ export class ScrapingService {
     const contentLength = homepageData.content?.trim().length || 0;
     const hasReactRoot = homepageData.html?.includes('id="root"') || homepageData.html?.includes('id="app"');
     return contentLength < 500 || hasReactRoot;
+  }
+
+  /**
+   * Extract page sections from single-page sites that use #hash navigation
+   * Looks for #hash anchor links in the HTML, matches them to our page types,
+   * and extracts the section content directly from the homepage HTML.
+   * No extra HTTP requests needed.
+   */
+  private extractHashSections(html: string, baseUrl: string): Record<string, { content: string; html: string; url: string }> {
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(html);
+    const result: Record<string, { content: string; html: string; url: string }> = {};
+    
+    // Collect all #hash links with their labels
+    const hashLinks: Array<{hash: string, label: string}> = [];
+    $('a[href^="#"]').each((_: any, el: any) => {
+      const href = $(el).attr('href');
+      const label = $(el).text().trim().toLowerCase();
+      if (href && href.length > 1) {
+        hashLinks.push({ hash: href.substring(1), label });
+      }
+    });
+    
+    if (hashLinks.length === 0) return result;
+    
+    // Deduplicate by hash
+    const seen = new Set<string>();
+    const uniqueHashLinks = hashLinks.filter(h => {
+      if (seen.has(h.hash)) return false;
+      seen.add(h.hash);
+      return true;
+    });
+    
+    // Page type keywords (same as findPageUrls)
+    const pageKeywords: Record<string, { labelKeywords: string[]; hashKeywords: string[] }> = {
+      services: {
+        labelKeywords: ['service', 'services', 'what we do', 'our services', 'offerings', 'expertise', 'capabilities'],
+        hashKeywords: ['services', 'service', 'what-we-do', 'our-services', 'offerings']
+      },
+      products: {
+        labelKeywords: ['product', 'products', 'catalog', 'portfolio', 'gallery', 'projects'],
+        hashKeywords: ['products', 'product', 'catalog', 'portfolio', 'gallery', 'projects']
+      },
+      contact: {
+        labelKeywords: ['contact', 'contact us', 'get in touch', 'reach us', 'reach out'],
+        hashKeywords: ['contact', 'contact-us', 'get-in-touch', 'reach-us']
+      },
+      solutions: {
+        labelKeywords: ['solution', 'solutions', 'our solutions'],
+        hashKeywords: ['solutions', 'solution', 'our-solutions']
+      },
+      features: {
+        labelKeywords: ['feature', 'features', 'product features'],
+        hashKeywords: ['features', 'feature']
+      },
+      blog: {
+        labelKeywords: ['blog', 'blogs', 'article', 'articles', 'news', 'resources'],
+        hashKeywords: ['blog', 'blogs', 'articles', 'news', 'resources']
+      }
+    };
+    
+    const assignedHashes = new Set<string>();
+    const pageTypes = ['services', 'products', 'contact', 'solutions', 'features', 'blog'];
+    
+    for (const hashLink of uniqueHashLinks) {
+      if (assignedHashes.has(hashLink.hash)) continue;
+      
+      for (const pageType of pageTypes) {
+        if (result[pageType]) continue; // already matched
+        
+        const kw = pageKeywords[pageType];
+        let matched = false;
+        
+        // Check label
+        for (const keyword of kw.labelKeywords) {
+          if (hashLink.label.includes(keyword)) { matched = true; break; }
+        }
+        // Check hash value
+        if (!matched) {
+          const hashLower = hashLink.hash.toLowerCase();
+          for (const keyword of kw.hashKeywords) {
+            if (hashLower === keyword || hashLower.includes(keyword)) { matched = true; break; }
+          }
+        }
+        
+        if (matched) {
+          // Extract section content from the homepage HTML using the #id
+          let section = $(`#${hashLink.hash}`);
+          if (section.length === 0) section = $(`[data-section="${hashLink.hash}"]`);
+          if (section.length === 0) section = $(`section#${hashLink.hash}`);
+          
+          if (section.length > 0) {
+            const sectionHtml = section.html() || '';
+            section.find('script, style').remove();
+            const sectionText = section.text().replace(/\s+/g, ' ').trim();
+            
+            if (sectionText.length >= 20) {
+              result[pageType] = {
+                content: sectionText,
+                html: sectionHtml,
+                url: `${baseUrl}#${hashLink.hash}`
+              };
+              assignedHashes.add(hashLink.hash);
+              console.log(`[SCRAPE] Extracted ${pageType} section from #${hashLink.hash} (${sectionText.length} chars)`);
+              break;
+            }
+          }
+          
+          console.log(`[SCRAPE] Hash #${hashLink.hash} matched ${pageType} but no usable content found`);
+          assignedHashes.add(hashLink.hash);
+          break;
+        }
+      }
+    }
+    
+    return result;
   }
 
   /**
