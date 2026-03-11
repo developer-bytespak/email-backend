@@ -4,7 +4,7 @@ import { LlmClientService } from '../../summarization/llm-client/llm-client.serv
 
 export interface SmsGenerationRequest {
   contactId: number;
-  summaryId: number;
+  summaryId?: number;
   clientId: number;
   clientSmsId?: number;
 }
@@ -31,10 +31,9 @@ export class SmsGenerationService {
    */
   async generateSmsDraft(request: SmsGenerationRequest): Promise<SmsGenerationResult> {
     try {
-      // Get scraping client to avoid prepared statement conflicts
       const scrapingClient = await this.prisma.getScrapingClient();
 
-      // Get contact, summary, and client SMS data
+      // Get contact data
       const contact = await scrapingClient.contact.findUnique({
         where: { id: request.contactId },
         select: {
@@ -44,6 +43,7 @@ export class SmsGenerationService {
           phone: true,
           website: true,
           status: true,
+          state: true,
           csvUpload: {
             select: {
               client: {
@@ -65,34 +65,12 @@ export class SmsGenerationService {
         throw new BadRequestException('Contact does not have an associated client');
       }
 
-      const summary = await scrapingClient.summary.findUnique({
-        where: { id: request.summaryId },
-        select: {
-          id: true,
-          contactId: true,
-          summaryText: true,
-          painPoints: true,
-          strengths: true,
-          opportunities: true,
-          keywords: true,
-          aiModel: true,
-        },
-      });
-
-      if (!summary) {
-        throw new NotFoundException(`Summary with ID ${request.summaryId} not found`);
-      }
-
-      if (summary.contactId !== request.contactId) {
-        throw new BadRequestException('Summary does not belong to the specified contact');
-      }
-
       // Validate contact belongs to the specified client
       if (contact.csvUpload.client.id !== request.clientId) {
         throw new BadRequestException('Contact does not belong to the specified client');
       }
 
-      // Get client's products/services and businessName from ProductService table
+      // Get client's products/services and businessName
       const productServices = await scrapingClient.productService.findMany({
         where: { clientId: request.clientId },
         select: {
@@ -102,12 +80,102 @@ export class SmsGenerationService {
           type: true,
         },
       });
-
-      // Extract businessName from first ProductService record (all should have same businessName)
       const businessName = productServices.length > 0 ? productServices[0].businessName : contact.csvUpload.client.name;
 
-      // Generate SMS content using Gemini AI
-      const smsContent = await this.generateSmsContent(summary, contact, productServices, businessName);
+      // Determine if summary already exists
+      let summaryId: number = 0;
+      let existingSummary = false;
+      let summary: any = null;
+
+      if (request.summaryId) {
+        summary = await scrapingClient.summary.findUnique({
+          where: { id: request.summaryId },
+          select: { id: true, contactId: true, summaryText: true, painPoints: true, strengths: true, opportunities: true, keywords: true },
+        });
+        if (!summary) {
+          throw new NotFoundException(`Summary with ID ${request.summaryId} not found`);
+        }
+        if (summary.contactId !== request.contactId) {
+          throw new BadRequestException('Summary does not belong to the specified contact');
+        }
+        summaryId = request.summaryId;
+        existingSummary = true;
+      } else {
+        const found = await scrapingClient.summary.findFirst({
+          where: { contactId: request.contactId },
+          orderBy: { createdAt: 'desc' as const },
+          select: { id: true, summaryText: true, painPoints: true, strengths: true, opportunities: true, keywords: true },
+        });
+        if (found) {
+          summary = found;
+          summaryId = found.id;
+          existingSummary = true;
+          this.logger.log(`Using existing summary ${summaryId} for contact ${request.contactId}`);
+        }
+      }
+
+      // Fetch scraped data directly
+      const scrapedData = await scrapingClient.scrapedData.findFirst({
+        where: { contactId: request.contactId },
+        orderBy: { scrapedAt: 'desc' as const },
+        select: {
+          id: true,
+          url: true,
+          pageTitle: true,
+          metaDescription: true,
+          homepageText: true,
+          servicesText: true,
+          productsText: true,
+          solutionsText: true,
+          featuresText: true,
+          blogText: true,
+          contactText: true,
+          extractedEmails: true,
+          extractedPhones: true,
+          keywords: true,
+          scrapeSuccess: true,
+        },
+      });
+
+      if (!scrapedData) {
+        throw new BadRequestException(`No scraped data found for contact ${request.contactId}. Please scrape the contact first.`);
+      }
+
+      let smsContent: string;
+
+      if (existingSummary && summary) {
+        // Summary exists — generate SMS only using summary data (existing flow)
+        smsContent = await this.generateSmsContent(summary, contact, productServices, businessName);
+      } else {
+        // No summary — combined summary + SMS in 1 API call
+        this.logger.log(`Combined summary + SMS generation for contact ${request.contactId}...`);
+        const combined = await this.generateCombinedSmsContent(scrapedData, contact, productServices, businessName);
+
+        // Save summary to DB
+        const savedSummary = await scrapingClient.summary.create({
+          data: {
+            contactId: request.contactId,
+            scrapedDataId: scrapedData.id,
+            summaryText: combined.summary,
+            painPoints: combined.painPoints,
+            strengths: combined.strengths,
+            opportunities: combined.opportunities,
+            keywords: combined.keywords,
+            aiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          },
+        });
+
+        // Update contact status to summarized
+        await scrapingClient.contact.update({
+          where: { id: request.contactId },
+          data: { status: 'summarized' },
+        });
+
+        summaryId = savedSummary.id;
+        this.logger.log(`✅ Combined generation: summary ${summaryId} + SMS for contact ${request.contactId}`);
+
+        smsContent = combined.smsMessage;
+      }
 
       // Save SMS draft to database
       const smsDraft = await scrapingClient.smsDraft.create({
@@ -115,7 +183,7 @@ export class SmsGenerationService {
           clientId: request.clientId,
           ...(request.clientSmsId !== undefined && { clientSmsId: request.clientSmsId }),
           contactId: request.contactId,
-          summaryId: request.summaryId,
+          summaryId: summaryId || null,
           messageText: smsContent,
           status: 'draft',
         },
@@ -125,7 +193,7 @@ export class SmsGenerationService {
 
       return {
         contactId: request.contactId,
-        summaryId: request.summaryId,
+        summaryId: summaryId,
         smsDraftId: smsDraft.id,
         success: true,
       };
@@ -135,7 +203,7 @@ export class SmsGenerationService {
 
       return {
         contactId: request.contactId,
-        summaryId: request.summaryId,
+        summaryId: request.summaryId || 0,
         smsDraftId: 0,
         success: false,
         error: error.message || 'Unknown SMS generation error',
@@ -298,6 +366,206 @@ SMS:
       this.logger.error('Failed to generate SMS content with Gemini:', error);
       throw error; // Re-throw the error instead of returning fallback
     }
+  }
+
+  /**
+   * Combined summary + SMS generation from scraped data (1 API call)
+   */
+  private async generateCombinedSmsContent(
+    scrapedData: any,
+    contact: any,
+    productServices?: any[],
+    businessName?: string,
+  ): Promise<{ summary: string; painPoints: string[]; strengths: string[]; opportunities: string[]; keywords: string[]; smsMessage: string }> {
+    const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
+
+    let servicesText = '';
+    if (productServices && productServices.length > 0) {
+      servicesText = productServices.map(ps => `- ${ps.name}`).join('\n');
+    } else {
+      servicesText = `- Web & mobile app development
+- AI SaaS products
+- Shopify & e-commerce solutions
+- WordPress & plugin development
+- UI/UX design`;
+    }
+
+    const clientBusinessName = businessName || contact.businessName;
+    const servicesArray = productServices && productServices.length > 0
+      ? productServices.map(ps => `"${ps.name}"`).join(', ')
+      : '';
+    const clientBusinessInfo = `{
+  "businessName": "${clientBusinessName}",
+  "services": [${servicesArray}]
+}`;
+
+    const combinedPrompt = `
+You are a B2B outreach specialist. Analyze the target business website content below, provide a structured business analysis, and write a personalized SMS.
+
+**TARGET BUSINESS:** ${contact.businessName}
+**WEBSITE:** ${contact.website || 'Not provided'}
+**LOCATION:** ${contact.state || 'Not specified'}
+
+**WEBSITE CONTENT TO ANALYZE:**
+${scrapedDetails}
+
+**YOUR CLIENT'S BUSINESS INFORMATION:**
+${clientBusinessInfo}
+
+**${clientBusinessName.toUpperCase()} SERVICES:**
+${servicesText}
+
+**TASK 1 - BUSINESS ANALYSIS:**
+Analyze the website content to produce:
+- A 2-3 sentence business summary
+- 3 specific pain points that external services could address
+- 3 business strengths and competitive advantages
+- 3 concrete opportunities for service providers
+- 5 relevant business keywords for targeting
+- Each pain point, strength, and opportunity must be unique — do NOT repeat the same idea in different words
+
+**TASK 2 - OUTREACH SMS:**
+Using the pain points you identified above, write ONE concise SMS (max 320 characters) in this style:
+
+Finding SDDOT contractors can be a hassle, right? We simplify the bidding process. Open to a quick chat?
+
+Struggling with data silos? FlexDataAI can help integrate your systems & boost insights. Open to a quick chat?
+
+Structure:
+1. Natural opener referencing their company or a clear pain point
+2. Brief acknowledgment of the challenge or opportunity
+3. One simple way ${clientBusinessName} can help (one benefit only)
+4. End with a light CTA like: Open to a quick chat?
+
+Tone: Professional but relaxed. No hype, no emojis, not promotional. Clear, human, and respectful of their time.
+
+**OUTPUT FORMAT (single JSON object):**
+{
+  "summary": "2-3 sentence business summary",
+  "painPoints": ["pain point 1", "pain point 2", "pain point 3"],
+  "strengths": ["strength 1", "strength 2", "strength 3"],
+  "opportunities": ["opportunity 1", "opportunity 2", "opportunity 3"],
+  "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "smsMessage": "One concise SMS max 320 characters"
+}
+
+Return ONLY the JSON object, no additional text.
+`;
+
+    try {
+      const response = await this.llmClient.generateCombinedSmsContent(combinedPrompt);
+      return this.parseCombinedSmsResponse(response);
+    } catch (error) {
+      this.logger.error('Failed to generate combined SMS content:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse combined summary + SMS JSON response
+   */
+  private parseCombinedSmsResponse(responseText: string): { summary: string; painPoints: string[]; strengths: string[]; opportunities: string[]; keywords: string[]; smsMessage: string } {
+    try {
+      this.logger.debug('Raw combined SMS AI response:', responseText);
+
+      let cleanText = responseText
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .replace(/^```/g, '')
+        .replace(/```$/g, '')
+        .trim();
+
+      const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        cleanText = jsonMatch[0];
+      }
+
+      const parsed = JSON.parse(cleanText);
+
+      if (!parsed.summary || !Array.isArray(parsed.painPoints) || !Array.isArray(parsed.strengths) ||
+        !Array.isArray(parsed.opportunities) || !Array.isArray(parsed.keywords) || !parsed.smsMessage) {
+        this.logger.warn('Invalid combined SMS response format:', parsed);
+        throw new Error('Invalid combined SMS response format');
+      }
+
+      // Validate SMS length
+      let smsMessage = parsed.smsMessage.replace(/^["']|["']$/g, '').trim();
+      if (smsMessage.length > 320) {
+        this.logger.warn(`Combined SMS exceeds 320 chars (${smsMessage.length}), truncating...`);
+        smsMessage = smsMessage.substring(0, 317) + '...';
+      }
+
+      this.logger.log('Successfully parsed combined SMS AI response');
+
+      return {
+        summary: parsed.summary,
+        painPoints: parsed.painPoints,
+        strengths: parsed.strengths,
+        opportunities: parsed.opportunities,
+        keywords: parsed.keywords,
+        smsMessage,
+      };
+
+    } catch (error) {
+      this.logger.error('Failed to parse combined SMS response:', error);
+      this.logger.debug('Raw response that failed to parse:', responseText);
+
+      return {
+        summary: 'Business analysis completed',
+        painPoints: ['Analysis in progress'],
+        strengths: ['Business evaluation ongoing'],
+        opportunities: ['Service opportunities being identified'],
+        keywords: ['business', 'analysis'],
+        smsMessage: 'We noticed some growth opportunities for your business. Open to a quick chat about how we can help?',
+      };
+    }
+  }
+
+  /**
+   * Format scraped data for AI prompt
+   */
+  private formatScrapedDataDetails(scrapedData: any): string {
+    if (!scrapedData) {
+      return 'No scraped data available';
+    }
+
+    const details: string[] = [];
+
+    if (scrapedData.pageTitle) {
+      details.push(`Page Title: ${scrapedData.pageTitle}`);
+    }
+    if (scrapedData.metaDescription) {
+      details.push(`Meta Description: ${scrapedData.metaDescription}`);
+    }
+    if (scrapedData.homepageText) {
+      const preview = scrapedData.homepageText.substring(0, 1500);
+      details.push(`Homepage Content: ${preview}${scrapedData.homepageText.length > 1500 ? '...' : ''}`);
+    }
+    if (scrapedData.servicesText) {
+      const preview = scrapedData.servicesText.substring(0, 800);
+      details.push(`Services: ${preview}${scrapedData.servicesText.length > 800 ? '...' : ''}`);
+    }
+    if (scrapedData.productsText) {
+      const preview = scrapedData.productsText.substring(0, 800);
+      details.push(`Products: ${preview}${scrapedData.productsText.length > 800 ? '...' : ''}`);
+    }
+    if (scrapedData.solutionsText) {
+      const preview = scrapedData.solutionsText.substring(0, 500);
+      details.push(`Solutions: ${preview}${scrapedData.solutionsText.length > 500 ? '...' : ''}`);
+    }
+    if (scrapedData.featuresText) {
+      const preview = scrapedData.featuresText.substring(0, 500);
+      details.push(`Features: ${preview}${scrapedData.featuresText.length > 500 ? '...' : ''}`);
+    }
+    if (scrapedData.blogText) {
+      const preview = scrapedData.blogText.substring(0, 300);
+      details.push(`Blog: ${preview}${scrapedData.blogText.length > 300 ? '...' : ''}`);
+    }
+    if (scrapedData.keywords && scrapedData.keywords.length > 0) {
+      details.push(`Keywords: ${scrapedData.keywords.join(', ')}`);
+    }
+
+    return details.length > 0 ? details.join('\n') : 'Limited scraped data available';
   }
 
   /**
