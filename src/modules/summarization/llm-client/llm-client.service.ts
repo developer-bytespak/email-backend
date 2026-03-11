@@ -80,7 +80,7 @@ Guidelines:
 `;
   }
 
-  private async callOpenAiAPI(prompt: string): Promise<{ text: string; tokensUsed: number }> {
+  private async callOpenAiAPI(prompt: string, maxTokens: number = 4024): Promise<{ text: string; tokensUsed: number }> {
     return new Promise((resolve, reject) => {
       this.requestQueue.push(async () => {
         try {
@@ -106,7 +106,7 @@ Guidelines:
                 }
               ],
               temperature: 0.7,
-              max_tokens: 1024
+              max_tokens: maxTokens
             })
           });
 
@@ -213,6 +213,19 @@ Guidelines:
       return this.extractSmsFromResponse(response.text);
     } catch (error) {
       this.logger.error('Failed to generate SMS content:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate combined summary + SMS content with higher token limit
+   */
+  async generateCombinedSmsContent(prompt: string): Promise<string> {
+    try {
+      const response = await this.callOpenAiAPI(prompt, 2048);
+      return response.text;
+    } catch (error) {
+      this.logger.error('Failed to generate combined SMS content:', error);
       throw error;
     }
   }

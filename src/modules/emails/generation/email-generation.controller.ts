@@ -19,8 +19,9 @@ export class GenerateEmailDto {
   @IsNumber()
   contactId: number;
 
+  @IsOptional()
   @IsNumber()
-  summaryId: number;
+  summaryId?: number;
 
   @IsNumber()
   clientId: number;
