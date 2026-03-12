@@ -175,13 +175,16 @@ export class EmailGenerationService {
 
       let emailContent: GeneratedEmailContent;
 
+      // Get client name for email sign-off
+      const clientName = contact.csvUpload.client.name;
+
       if (existingSummary) {
         // Summary exists — generate email only (1 API call)
-        emailContent = await this.generateEmailContent(scrapedData, contact, request.tone || 'pro_friendly', productServices, businessName);
+        emailContent = await this.generateEmailContent(scrapedData, contact, request.tone || 'pro_friendly', productServices, businessName, clientName);
       } else {
         // No summary — combined summary + email in 1 API call
         this.logger.log(`Combined summary + email generation for contact ${request.contactId}...`);
-        const combined = await this.generateCombinedContent(scrapedData, contact, request.tone || 'pro_friendly', productServices, businessName);
+        const combined = await this.generateCombinedContent(scrapedData, contact, request.tone || 'pro_friendly', productServices, businessName, clientName);
 
         // Save summary to DB
         const savedSummary = await scrapingClient.summary.create({
@@ -214,6 +217,12 @@ export class EmailGenerationService {
         };
       }
 
+      // Post-process: replace any remaining placeholders with actual names
+      emailContent.emailBody = emailContent.emailBody
+        .replace(/\[Your Name\]/g, clientName)
+        .replace(/\[your name\]/gi, clientName)
+        .replace(/^Hi there,/m, `Hi ${contact.businessName || 'there'},`);
+
       // Save email draft to database
       const emailDraft = await scrapingClient.emailDraft.create({
         data: {
@@ -224,7 +233,7 @@ export class EmailGenerationService {
           subjectLines: emailContent.subjectLines,
           bodyText: emailContent.emailBody,
           icebreaker: emailContent.icebreaker,
-          productsRelevant: emailContent.rationale,
+          productsRelevant: typeof emailContent.rationale === 'string' ? emailContent.rationale : JSON.stringify(emailContent.rationale),
           status: 'draft',
         },
       });
@@ -262,9 +271,10 @@ export class EmailGenerationService {
     contact: any,
     tone: EmailTone,
     productServices?: any[],
-    businessName?: string
+    businessName?: string,
+    clientName?: string
   ): Promise<CombinedAIResponse> {
-    const prompt = this.buildCombinedPrompt(scrapedData, contact, tone, productServices, businessName);
+    const prompt = this.buildCombinedPrompt(scrapedData, contact, tone, productServices, businessName, clientName);
 
     try {
       const response = await this.callGeminiAPIForEmail(prompt);
@@ -283,9 +293,10 @@ export class EmailGenerationService {
     contact: any,
     tone: EmailTone,
     productServices?: any[],
-    businessName?: string
+    businessName?: string,
+    clientName?: string
   ): Promise<GeneratedEmailContent> {
-    const prompt = this.buildEmailGenerationPrompt(scrapedData, contact, tone, productServices, businessName);
+    const prompt = this.buildEmailGenerationPrompt(scrapedData, contact, tone, productServices, businessName, clientName);
 
     try {
       // Call Gemini API directly for email generation
@@ -391,8 +402,10 @@ export class EmailGenerationService {
   /**
    * Build combined prompt for summary + email in one call
    */
-  private buildCombinedPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string): string {
+  private buildCombinedPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string, clientName?: string): string {
     const toneInstructions = this.getToneInstructions(tone);
+    const senderName = clientName || 'Your Name';
+    const contactBizName = contact.businessName || 'there';
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
 
     let servicesText = '';
@@ -402,12 +415,28 @@ export class EmailGenerationService {
         return `- ${ps.name}${desc}`;
       }).join('\n');
     } else {
-      servicesText = `- Custom web applications & dashboards
-- Mobile apps (iOS/Android)
-- AI integrations & SaaS products
-- E-commerce solutions (Shopify)
-- WordPress development
-- UI/UX design`;
+      servicesText = `- Web Development
+- WordPress Development
+- Shopify Development
+- MERN Stack Development
+- UI/UX Design
+- Mobile App Development (iOS & Android)
+- Custom Software Development
+- AI Applications
+- AI Integrations
+- Artificial Intelligence & Machine Learning
+- Personalized AI Chatbots
+- Business Process Automation
+- Search Engine Optimization (SEO)
+- Social Media Marketing
+- Social Media Management
+- Data Analytics & Business Intelligence
+- Cloud Computing Services
+- Cloud Integration
+- CRM Development & Integration
+- ERP Solutions
+- Cybersecurity Solutions
+- Blockchain Development`;
     }
 
     const clientBusinessName = businessName || contact.businessName;
@@ -447,7 +476,7 @@ Analyze the website content to produce:
 **TASK 2 - OUTREACH EMAIL:**
 Using the pain points and strengths you identified above, write a personalized outreach email:
 1. Reference a specific detail from their website (a product name, a phrase, a service they mention)
-2. Pick the most relevant pain point that connects to a specific ${clientBusinessName} service
+2. Match pain points to relevant ${clientBusinessName} services — pitch one or MULTIPLE services depending on how many genuinely solve different pain points. It's perfectly fine to offer just one service if only one is relevant. Only include services that directly address a real pain point found on their website. Do NOT include irrelevant services just to pad the list.
 3. Use ${toneInstructions} tone
 4. Keep email body 120-180 words total (excluding greeting and closing)
 5. Include soft call-to-action
@@ -456,7 +485,7 @@ Using the pain points and strengths you identified above, write a personalized o
 8. Do NOT restate the same benefit or pain point twice anywhere in the email
 
 **EMAIL STRUCTURE (emailBody must follow this exact format):**
-Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n[Your Name]
+Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n${senderName}
 
 **OUTPUT FORMAT (single JSON object):**
 {
@@ -466,9 +495,9 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
   "opportunities": ["opportunity 1", "opportunity 2", "opportunity 3"],
   "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi [Name],\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n[Your Name]",
+  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n${senderName}",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
-  "rationale": "Which pain point you identified from the website and which ${clientBusinessName} service you matched it to"
+  "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
 }
 
 **ICE BREAKER GUIDELINES:**
@@ -482,8 +511,10 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
   /**
    * Build email-only prompt (when summary already exists)
    */
-  private buildEmailGenerationPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string): string {
+  private buildEmailGenerationPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string, clientName?: string): string {
     const toneInstructions = this.getToneInstructions(tone);
+    const senderName = clientName || 'Your Name';
+    const contactBizName = contact.businessName || 'there';
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
 
     // Format services from ProductService table
@@ -495,12 +526,28 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
       }).join('\n');
     } else {
       // Fallback to default services if none exist
-      servicesText = `- Custom web applications & dashboards
-- Mobile apps (iOS/Android)
-- AI integrations & SaaS products
-- E-commerce solutions (Shopify)
-- WordPress development
-- UI/UX design`;
+      servicesText = `- Web Development
+- WordPress Development
+- Shopify Development
+- MERN Stack Development
+- UI/UX Design
+- Mobile App Development (iOS & Android)
+- Custom Software Development
+- AI Applications
+- AI Integrations
+- Artificial Intelligence & Machine Learning
+- Personalized AI Chatbots
+- Business Process Automation
+- Search Engine Optimization (SEO)
+- Social Media Marketing
+- Social Media Management
+- Data Analytics & Business Intelligence
+- Cloud Computing Services
+- Cloud Integration
+- CRM Development & Integration
+- ERP Solutions
+- Cybersecurity Solutions
+- Blockchain Development`;
     }
 
     // Use businessName from ProductService or fallback to contact's businessName
@@ -534,7 +581,7 @@ ${servicesText}
 **REQUIREMENTS:**
 1. First analyze the website content above to identify 2-3 specific pain points and business strengths
 2. Reference a specific detail from their website (a product name, a phrase, a service they mention)
-3. Pick the most relevant pain point that connects to a specific ${clientBusinessName} service
+3. Match pain points to relevant ${clientBusinessName} services — pitch one or MULTIPLE services depending on how many genuinely solve different pain points. It's perfectly fine to offer just one service if only one is relevant. Only include services that directly address a real pain point found on their website. Do NOT include irrelevant services just to pad the list.
 4. Use ${toneInstructions} tone
 5. Keep email body 120-180 words total (excluding greeting and closing)
 6. Include soft call-to-action
@@ -543,14 +590,14 @@ ${servicesText}
 9. Do NOT restate the same benefit or pain point twice anywhere in the email
 
 **EMAIL STRUCTURE (emailBody must follow this exact format):**
-Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n[Your Name]
+Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n${senderName}
 
 **OUTPUT FORMAT:**
 {
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi [Name],\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n[Your Name]",
+  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n${senderName}",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
-  "rationale": "Which pain point you identified from the website and which ${clientBusinessName} service you matched it to"
+  "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
 }
 
 **ICE BREAKER GUIDELINES:**
@@ -659,13 +706,18 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
         cleanText = jsonMatch[0];
       }
 
+      // Fix real newlines inside JSON string values (AI often returns unescaped newlines)
+      cleanText = cleanText.replace(/("[^"]*")/gs, (match) => {
+        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      });
+
       const parsed = JSON.parse(cleanText);
 
-      // Validate all required fields
+      // Validate all required fields (rationale is optional — AI sometimes omits it)
       if (!parsed.summary || !Array.isArray(parsed.painPoints) || !Array.isArray(parsed.strengths) ||
         !Array.isArray(parsed.opportunities) || !Array.isArray(parsed.keywords) ||
         !parsed.subjectLines || !Array.isArray(parsed.subjectLines) ||
-        !parsed.emailBody || !parsed.icebreaker || !parsed.rationale) {
+        !parsed.emailBody || !parsed.icebreaker) {
         this.logger.warn('Invalid combined response format:', parsed);
         throw new Error('Invalid combined response format from OpenAI API');
       }
@@ -681,6 +733,9 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
 
       this.logger.log('Successfully parsed combined AI response');
 
+      // Stringify rationale if AI returned it as an object/array, or provide default
+      const rationale = !parsed.rationale ? 'AI-generated outreach' : (typeof parsed.rationale === 'string' ? parsed.rationale : JSON.stringify(parsed.rationale));
+
       return {
         summary: parsed.summary,
         painPoints: parsed.painPoints,
@@ -690,7 +745,7 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
         subjectLines: parsed.subjectLines,
         emailBody: parsed.emailBody,
         icebreaker: cleanIcebreaker,
-        rationale: parsed.rationale,
+        rationale,
       };
 
     } catch (error) {
@@ -736,12 +791,17 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
         cleanText = jsonMatch[0];
       }
 
+      // Fix real newlines inside JSON string values (AI often returns unescaped newlines)
+      cleanText = cleanText.replace(/("[^"]*")/gs, (match) => {
+        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      });
+
       // Parse JSON response
       const parsed = JSON.parse(cleanText);
 
-      // Validate required fields
+      // Validate required fields (rationale is optional — AI sometimes omits it)
       if (!parsed.subjectLines || !Array.isArray(parsed.subjectLines) ||
-        !parsed.emailBody || !parsed.icebreaker || !parsed.rationale) {
+        !parsed.emailBody || !parsed.icebreaker) {
         this.logger.warn('Invalid response format from Openai API:', parsed);
         throw new Error('Invalid response format from Openai API');
       }
@@ -759,11 +819,14 @@ Hi [First Name or there],\n\n[Paragraph 1: 2-3 sentences connecting their specif
 
       this.logger.log('Successfully parsed email content from Openai API');
 
+      // Stringify rationale if AI returned it as an object/array, or provide default
+      const rationale = !parsed.rationale ? 'AI-generated outreach' : (typeof parsed.rationale === 'string' ? parsed.rationale : JSON.stringify(parsed.rationale));
+
       return {
         subjectLines: parsed.subjectLines,
         emailBody: parsed.emailBody,
         icebreaker: cleanIcebreaker,
-        rationale: parsed.rationale
+        rationale,
       };
 
     } catch (error) {
