@@ -464,6 +464,9 @@ ${clientBusinessInfo}
 **${clientBusinessName.toUpperCase()} SERVICES:**
 ${servicesText}
 
+**FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
+"We're Bytes Platform a technology company with 4+ years of experience providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
+
 **TASK 1 - BUSINESS ANALYSIS:**
 Analyze the website content to produce:
 - A 2-3 sentence business summary
@@ -475,19 +478,25 @@ Analyze the website content to produce:
 
 **TASK 2 - OUTREACH EMAIL:**
 Using the pain points and strengths you identified above, write a personalized outreach email:
-1. Reference a specific detail from their website (a product name, a phrase, a service they mention)
-2. Match pain points to relevant ${clientBusinessName} services — pitch one or MULTIPLE services depending on how many genuinely solve different pain points. It's perfectly fine to offer just one service if only one is relevant. Only include services that directly address a real pain point found on their website. Do NOT include irrelevant services just to pad the list.
-3. Use ${toneInstructions} tone
-4. Keep email body 120-180 words total (excluding greeting and closing)
-5. Include soft call-to-action
-6. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
-7. Do NOT repeat phrases from the icebreaker in the email body or subject lines
-8. Do NOT restate the same benefit or pain point twice anywhere in the email
+1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
+2. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
+3. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
+4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
+5. Use ${toneInstructions} tone
+6. Keep email body 250-300 words total (excluding greeting and closing)
+7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
+8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+9. Do NOT restate the same benefit or pain point twice anywhere in the email
 
 **EMAIL STRUCTURE (emailBody must follow this exact format):**
-Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n${senderName}
+Hi ${contactBizName},\n\n
+[Paragraph 1: FIXED COMPANY INTRO — copied word for word from the block above]\n\n
+[Paragraph 2: 2-3 sentences referencing something specific from their website — a service, product, or value they emphasize. End by noting what clearly drives their business.]\n\n
+[Paragraph 3: 2-3 sentences connecting their specific pain points to ${clientBusinessName} services. Be specific about what will improve — workflows, security, visibility, costs, etc.]\n\n
+[Paragraph 4: 1-2 sentences. Soft call-to-action ending with a question like "Would you be open to a quick conversation?" or "Would you be open to a quick chat?"]\n\n
+Best regards,
 
-**OUTPUT FORMAT (single JSON object):**
+**OUTPUT FORMAT (single JSON object, no markdown, no extra text):**
 {
   "summary": "2-3 sentence business summary",
   "painPoints": ["pain point 1", "pain point 2", "pain point 3"],
@@ -495,7 +504,7 @@ Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific p
   "opportunities": ["opportunity 1", "opportunity 2", "opportunity 3"],
   "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n${senderName}",
+  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch paragraph]\n\n[CTA paragraph]\n\nBest regards",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
   "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
 }
@@ -505,6 +514,14 @@ Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific p
 - Should reference something specific from their website content
 - Should create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
+
+**STRICT RULES — follow all of these without exception:**
+- The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
+- Paragraph 2 must always be the client observation — never merge it with the pitch
+- Paragraph 3 must always be the pitch — never merge it with the CTA
+- Paragraph 4 must always end with a question
+- Never produce fewer than 4 paragraphs in the email body
+- Output must be a single valid JSON object — no markdown blocks, no extra explanation
 `;
   }
 
@@ -578,24 +595,33 @@ ${clientBusinessInfo}
 **${clientBusinessName.toUpperCase()} SERVICES:**
 ${servicesText}
 
+**FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
+"We're Bytes Platform a technology company providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
+
 **REQUIREMENTS:**
 1. First analyze the website content above to identify 2-3 specific pain points and business strengths
-2. Reference a specific detail from their website (a product name, a phrase, a service they mention)
-3. Match pain points to relevant ${clientBusinessName} services — pitch one or MULTIPLE services depending on how many genuinely solve different pain points. It's perfectly fine to offer just one service if only one is relevant. Only include services that directly address a real pain point found on their website. Do NOT include irrelevant services just to pad the list.
-4. Use ${toneInstructions} tone
-5. Keep email body 120-180 words total (excluding greeting and closing)
-6. Include soft call-to-action
-7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
-8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
-9. Do NOT restate the same benefit or pain point twice anywhere in the email
+2. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
+3. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
+4. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
+5. Paragraph 4 MUST be a short, soft call-to-action ending with a question
+6. Use ${toneInstructions} tone
+7. Keep email body 250-300 words total (excluding greeting and closing)
+8. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
+9. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+10. Do NOT restate the same benefit or pain point twice anywhere in the email
 
 **EMAIL STRUCTURE (emailBody must follow this exact format):**
-Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific pain point to your service. Reference something from their website.]\n\n[Paragraph 2: 2-3 sentences about how you can help with a soft call-to-action. End with a question like "Would you be open to a quick chat?" or "Want me to share some ideas?"]\n\nBest regards,\n${senderName}
+Hi ${contactBizName},\n\n
+[Paragraph 1: FIXED COMPANY INTRO — copied word for word from the block above]\n\n
+[Paragraph 2: 2-3 sentences referencing something specific from their website — a service, product, or value they emphasize. End by noting what clearly drives their business.]\n\n
+[Paragraph 3: 2-3 sentences connecting their specific pain points to ${clientBusinessName} services. Be specific about what will improve — workflows, security, visibility, costs, etc.]\n\n
+[Paragraph 4: 1-2 sentences. Soft call-to-action ending with a question like "Would you be open to a quick conversation?" or "Would you be open to a quick chat?"]\n\n
+Best regards,
 
 **OUTPUT FORMAT:**
 {
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1 text here]\n\n[Paragraph 2 text here]\n\nBest regards,\n${senderName}",
+  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch paragraph]\n\n[CTA paragraph]\n\nBest regards,",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
   "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
 }
@@ -605,7 +631,14 @@ Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific p
 - Should reference something specific from their website content
 - Should create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
-- Examples: "I noticed your recent expansion into digital services" or "Your custom software solutions caught my attention"
+
+**STRICT RULES — follow all of these without exception:**
+- The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
+- Paragraph 2 must always be the client observation — never merge it with the pitch
+- Paragraph 3 must always be the pitch — never merge it with the CTA
+- Paragraph 4 must always end with a question
+- Never produce fewer than 4 paragraphs in the email body
+- Output must be a single valid JSON object — no markdown blocks, no extra explanation
 `;
   }
 
@@ -713,17 +746,17 @@ Hi ${contactBizName},\n\n[Paragraph 1: 2-3 sentences connecting their specific p
 
       const parsed = JSON.parse(cleanText);
 
-      // Validate all required fields (rationale is optional — AI sometimes omits it)
+      // Validate core required fields (icebreaker and rationale are optional — AI sometimes omits them)
       if (!parsed.summary || !Array.isArray(parsed.painPoints) || !Array.isArray(parsed.strengths) ||
         !Array.isArray(parsed.opportunities) || !Array.isArray(parsed.keywords) ||
         !parsed.subjectLines || !Array.isArray(parsed.subjectLines) ||
-        !parsed.emailBody || !parsed.icebreaker) {
+        !parsed.emailBody) {
         this.logger.warn('Invalid combined response format:', parsed);
         throw new Error('Invalid combined response format from OpenAI API');
       }
 
-      // Clean icebreaker
-      let cleanIcebreaker = parsed.icebreaker.trim();
+      // Clean icebreaker (use default if AI omitted it)
+      let cleanIcebreaker = (parsed.icebreaker || 'I noticed your business has some exciting growth potential.').trim();
       if (cleanIcebreaker.includes('\n')) {
         cleanIcebreaker = cleanIcebreaker.split('\n')[0].trim();
       }
