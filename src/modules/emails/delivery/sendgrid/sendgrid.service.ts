@@ -35,8 +35,9 @@ export class SendGridService {
     try {
       const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
 
-      // Prepare email content with unsubscribe link
+      // Prepare email content with signature and unsubscribe link
       let processedHtml = html;
+      processedHtml = this.injectSignature(processedHtml, baseUrl);
       if (options?.unsubscribeToken) {
         processedHtml = this.injectUnsubscribeLink(processedHtml, options.unsubscribeToken, baseUrl);
       }
@@ -121,6 +122,39 @@ export class SendGridService {
       
       throw new BadRequestException(`Failed to send email: ${error.message}`);
     }
+  }
+
+  /**
+   * Inject company signature before closing body tag
+   */
+  private injectSignature(html: string, baseUrl: string): string {
+    // Prevent duplicate signature injection - use a unique marker only present in the signature block
+    if (html.includes('id="bytes-email-signature"')) {
+      return html;
+    }
+
+    const logoUrl = 'https://jgvyyymd0liffl4w.public.blob.vercel-storage.com/Logo%20%282%29.png';
+
+    const signatureHtml = `
+<div id="bytes-email-signature" style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-family: Arial, Helvetica, sans-serif; font-size: 14px; color: #333;">
+  <p style="margin: 0 0 12px 0; font-size: 16px; font-weight: bold; color: #1a1a1a;">Bytes Platform</p>
+  <p style="margin: 0 0 8px 0; font-size: 13px; color: #555;">Helping businesses scale with modern digital solutions</p>
+  <div style="margin-top: 10px; font-size: 13px; color: #555;">
+    <p style="margin: 2px 0;">&#127760; <a href="https://bytesplatform.com/" style="color: #0066cc; text-decoration: none;">bytesplatform.com</a></p>
+    <p style="margin: 2px 0;">&#128231; <a href="mailto:info@bytesplatform.com" style="color: #0066cc; text-decoration: none;">info@bytesplatform.com</a></p>
+    <p style="margin: 2px 0;">&#128222; <a href="tel:8333230371" style="color: #0066cc; text-decoration: none;">833-323-0371</a> (Toll Free)</p>
+    <p style="margin: 2px 0;">&#128222; <a href="tel:9457230190" style="color: #0066cc; text-decoration: none;">945-723-0190</a> (Direct Line)</p>
+  </div>
+  <div style="margin-top: 12px;">
+    <img src="${logoUrl}" alt="Bytesplatform" style="max-width: 150px; height: auto;" />
+  </div>
+</div>`;
+
+    const lastBodyIndex = html.lastIndexOf('</body>');
+    if (lastBodyIndex !== -1) {
+      return html.slice(0, lastBodyIndex) + signatureHtml + html.slice(lastBodyIndex);
+    }
+    return `${html}${signatureHtml}`;
   }
 
   /**
