@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../../config/prisma.service';
 import { getNextOpenAiApiKey } from '../../../common/utils/gemini-key-rotator';
+import { jsonrepair } from 'jsonrepair';
 
 export interface EmailGenerationRequest {
   contactId: number;
@@ -397,6 +398,27 @@ export class EmailGenerationService {
   }
 
   /**
+   * Safely parse JSON with fallback repair using jsonrepair.
+   * Handles unescaped newlines, broken quotes, and other common AI output issues.
+   */
+  private safeJsonParse(text: string): any {
+    try {
+      return JSON.parse(text);
+    } catch (firstError) {
+      this.logger.warn('JSON.parse failed, attempting repair with jsonrepair...');
+      try {
+        const repaired = jsonrepair(text);
+        const parsed = JSON.parse(repaired);
+        this.logger.log('Successfully repaired and parsed JSON');
+        return parsed;
+      } catch (repairError) {
+        this.logger.error('jsonrepair also failed:', repairError);
+        throw firstError;
+      }
+    }
+  }
+
+  /**
    * Build the prompt for email generation based on client business requirements
    */
   /**
@@ -467,7 +489,32 @@ ${servicesText}
 **FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
 "We're Bytes Platform a technology company with 4+ years of experience providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
 
-**TASK 1 - BUSINESS ANALYSIS:**
+---
+
+**STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
+
+Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
+
+- Software development, web development, app development, or mobile development
+- WordPress, Shopify, or CMS-based development
+- UI/UX design or product design
+- AI applications, AI integrations, machine learning, or chatbot development
+- Business process automation or workflow automation
+- SEO, social media marketing, or digital marketing
+- Data analytics, business intelligence, or reporting tools
+- Cloud computing, cloud integration, or cloud infrastructure
+- CRM development, ERP solutions, or enterprise software
+- Cybersecurity solutions or IT security services
+- Blockchain development or Web3 services
+
+If the target business offers ANY of the above as their OWN services (not just uses them internally), set: isCompetitor = true.
+Otherwise set: isCompetitor = false.
+
+Record this as "isCompetitor" in your output JSON and use it to determine the email strategy below.
+
+---
+
+**TASK 1 — BUSINESS ANALYSIS:**
 Analyze the website content to produce:
 - A 2-3 sentence business summary
 - 3 specific pain points that external services could address
@@ -476,8 +523,12 @@ Analyze the website content to produce:
 - 5 relevant business keywords for targeting
 - Each pain point, strength, and opportunity must be unique — do NOT repeat the same idea in different words
 
-**TASK 2 - OUTREACH EMAIL:**
-Using the pain points and strengths you identified above, write a personalized outreach email:
+---
+
+**TASK 2 — OUTREACH EMAIL:**
+
+**IF isCompetitor = false (Standard Pitch):**
+Using the pain points and strengths you identified, write a personalized outreach email:
 1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
 2. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
 3. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
@@ -488,13 +539,36 @@ Using the pain points and strengths you identified above, write a personalized o
 8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
 9. Do NOT restate the same benefit or pain point twice anywhere in the email
 
-**EMAIL STRUCTURE (emailBody must follow this exact format):**
+**IF isCompetitor = true (Growth Partner Pitch):**
+This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
+1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
+2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
+3. Paragraph 3 MUST pivot to GROWTH angles only — choose the most relevant from:
+   - Expanding their digital visibility and inbound leads through SEO
+   - Scaling client acquisition using marketing automation or CRM
+   - Strengthening their brand presence through social media management
+   - Unlocking new revenue streams by adding complementary service verticals
+   - Improving internal operational efficiency through automation or BI dashboards
+   - Use collaborative framing: "growing together", "expanding reach", "scaling impact"
+   - NEVER imply they lack technical skill or capability
+4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
+5. Use ${toneInstructions} tone
+6. Keep email body 250-300 words total (excluding greeting and closing)
+7. Each subject line MUST take a different angle focused on GROWTH, SCALE, or VISIBILITY — not technical services
+8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+9. Do NOT restate the same growth angle twice anywhere in the email
+
+---
+
+**EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
 Hi ${contactBizName},\n\n
-[Paragraph 1: FIXED COMPANY INTRO — copied word for word from the block above]\n\n
-[Paragraph 2: 2-3 sentences referencing something specific from their website — a service, product, or value they emphasize. End by noting what clearly drives their business.]\n\n
-[Paragraph 3: 2-3 sentences connecting their specific pain points to ${clientBusinessName} services. Be specific about what will improve — workflows, security, visibility, costs, etc.]\n\n
-[Paragraph 4: 1-2 sentences. Soft call-to-action ending with a question like "Would you be open to a quick conversation?" or "Would you be open to a quick chat?"]\n\n
+[Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
+[Paragraph 2: Specific observation about their business from the website]\n\n
+[Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
+[Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
+
+---
 
 **OUTPUT FORMAT (single JSON object, no markdown, no extra text):**
 {
@@ -503,25 +577,42 @@ Best regards,
   "strengths": ["strength 1", "strength 2", "strength 3"],
   "opportunities": ["opportunity 1", "opportunity 2", "opportunity 3"],
   "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
+  "isCompetitor": false,
+  "pitchAngle": "standard",
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch paragraph]\n\n[CTA paragraph]\n\nBest regards",
+  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch or growth paragraph]\n\n[CTA paragraph]\n\nBest regards",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
-  "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
+  "rationale": "List each pain point or growth opportunity and the specific ${clientBusinessName} service(s) or angle matched to it"
 }
+
+---
 
 **ICE BREAKER GUIDELINES:**
 - Must be EXACTLY ONE sentence (25-35 words maximum)
 - Should reference something specific from their website content
-- Should create curiosity or acknowledge their success
+- For competitors: acknowledge their strength or market position, create curiosity about growth
+- For non-competitors: create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
 
+---
+
 **STRICT RULES — follow all of these without exception:**
+- ALWAYS run competitor detection first before writing anything
 - The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
 - Paragraph 2 must always be the client observation — never merge it with the pitch
-- Paragraph 3 must always be the pitch — never merge it with the CTA
+- Paragraph 3 must always be the pitch OR growth angle — never merge it with the CTA
 - Paragraph 4 must always end with a question
 - Never produce fewer than 4 paragraphs in the email body
+- For competitors: never pitch dev, AI, automation, or cybersecurity as if they don't have it
+- For competitors: only pitch SEO, social media, marketing automation, CRM growth, or BI expansion
 - Output must be a single valid JSON object — no markdown blocks, no extra explanation
+
+**CRITICAL JSON FORMATTING RULES:**
+- Return ONLY valid JSON — no text before or after the JSON object
+- Use \\n for ALL newlines inside string values — NEVER use raw line breaks inside strings
+- Escape all double quotes inside string values with \\"
+- Do NOT break strings across multiple lines
+- The entire JSON output must be parseable by JSON.parse()
 `;
   }
 
@@ -598,47 +689,112 @@ ${servicesText}
 **FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
 "We're Bytes Platform a technology company providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
 
-**REQUIREMENTS:**
-1. First analyze the website content above to identify 2-3 specific pain points and business strengths
-2. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-3. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
-4. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
-5. Paragraph 4 MUST be a short, soft call-to-action ending with a question
-6. Use ${toneInstructions} tone
-7. Keep email body 250-300 words total (excluding greeting and closing)
-8. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
-9. Do NOT repeat phrases from the icebreaker in the email body or subject lines
-10. Do NOT restate the same benefit or pain point twice anywhere in the email
+---
 
-**EMAIL STRUCTURE (emailBody must follow this exact format):**
+**STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
+
+Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
+
+- Software development, web development, app development, or mobile development
+- WordPress, Shopify, or CMS-based development
+- UI/UX design or product design
+- AI applications, AI integrations, machine learning, or chatbot development
+- Business process automation or workflow automation
+- SEO, social media marketing, or digital marketing
+- Data analytics, business intelligence, or reporting tools
+- Cloud computing, cloud integration, or cloud infrastructure
+- CRM development, ERP solutions, or enterprise software
+- Cybersecurity solutions or IT security services
+- Blockchain development or Web3 services
+
+If the target business offers ANY of the above as their OWN services (not just uses them internally), set: isCompetitor = true.
+Otherwise set: isCompetitor = false.
+
+Use this to determine the email strategy below.
+
+---
+
+**OUTREACH EMAIL:**
+
+**IF isCompetitor = false (Standard Pitch):**
+Using the pain points and strengths you identified, write a personalized outreach email:
+1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
+2. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
+3. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
+4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
+5. Use ${toneInstructions} tone
+6. Keep email body 250-300 words total (excluding greeting and closing)
+7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition of the same idea
+8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+9. Do NOT restate the same benefit or pain point twice anywhere in the email
+
+**IF isCompetitor = true (Growth Partner Pitch):**
+This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
+1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
+2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
+3. Paragraph 3 MUST pivot to GROWTH angles only — choose the most relevant from:
+   - Expanding their digital visibility and inbound leads through SEO
+   - Scaling client acquisition using marketing automation or CRM
+   - Strengthening their brand presence through social media management
+   - Unlocking new revenue streams by adding complementary service verticals
+   - Improving internal operational efficiency through automation or BI dashboards
+   - Use collaborative framing: "growing together", "expanding reach", "scaling impact"
+   - NEVER imply they lack technical skill or capability
+4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
+5. Use ${toneInstructions} tone
+6. Keep email body 250-300 words total (excluding greeting and closing)
+7. Each subject line MUST take a different angle focused on GROWTH, SCALE, or VISIBILITY — not technical services
+8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
+9. Do NOT restate the same growth angle twice anywhere in the email
+
+---
+
+**EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
 Hi ${contactBizName},\n\n
-[Paragraph 1: FIXED COMPANY INTRO — copied word for word from the block above]\n\n
-[Paragraph 2: 2-3 sentences referencing something specific from their website — a service, product, or value they emphasize. End by noting what clearly drives their business.]\n\n
-[Paragraph 3: 2-3 sentences connecting their specific pain points to ${clientBusinessName} services. Be specific about what will improve — workflows, security, visibility, costs, etc.]\n\n
-[Paragraph 4: 1-2 sentences. Soft call-to-action ending with a question like "Would you be open to a quick conversation?" or "Would you be open to a quick chat?"]\n\n
+[Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
+[Paragraph 2: Specific observation about their business from the website]\n\n
+[Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
+[Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
+
+---
 
 **OUTPUT FORMAT:**
 {
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch paragraph]\n\n[CTA paragraph]\n\nBest regards,",
+  "emailBody": "Hi ${contactBizName},\n\n[Fixed intro paragraph]\n\n[Client observation paragraph]\n\n[Pitch or growth paragraph]\n\n[CTA paragraph]\n\nBest regards,",
   "icebreaker": "Single compelling opening sentence that hooks attention (25-35 words max)",
-  "rationale": "List each pain point and the specific ${clientBusinessName} service(s) matched to it"
+  "rationale": "List each pain point or growth opportunity and the specific ${clientBusinessName} service(s) or angle matched to it"
 }
+
+---
 
 **ICE BREAKER GUIDELINES:**
 - Must be EXACTLY ONE sentence (25-35 words maximum)
 - Should reference something specific from their website content
-- Should create curiosity or acknowledge their success
+- For competitors: acknowledge their strength or market position, create curiosity about growth
+- For non-competitors: create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
 
+---
+
 **STRICT RULES — follow all of these without exception:**
+- ALWAYS run competitor detection first before writing anything
 - The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
 - Paragraph 2 must always be the client observation — never merge it with the pitch
-- Paragraph 3 must always be the pitch — never merge it with the CTA
+- Paragraph 3 must always be the pitch OR growth angle — never merge it with the CTA
 - Paragraph 4 must always end with a question
 - Never produce fewer than 4 paragraphs in the email body
+- For competitors: never pitch dev, AI, automation, or cybersecurity as if they don't have it
+- For competitors: only pitch SEO, social media, marketing automation, CRM growth, or BI expansion
 - Output must be a single valid JSON object — no markdown blocks, no extra explanation
+
+**CRITICAL JSON FORMATTING RULES:**
+- Return ONLY valid JSON — no text before or after the JSON object
+- Use \\n for ALL newlines inside string values — NEVER use raw line breaks inside strings
+- Escape all double quotes inside string values with \\"
+- Do NOT break strings across multiple lines
+- The entire JSON output must be parseable by JSON.parse()
 `;
   }
 
@@ -739,12 +895,7 @@ Best regards,
         cleanText = jsonMatch[0];
       }
 
-      // Fix real newlines inside JSON string values (AI often returns unescaped newlines)
-      cleanText = cleanText.replace(/("[^"]*")/gs, (match) => {
-        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      });
-
-      const parsed = JSON.parse(cleanText);
+      const parsed = this.safeJsonParse(cleanText);
 
       // Validate core required fields (icebreaker and rationale are optional — AI sometimes omits them)
       if (!parsed.summary || !Array.isArray(parsed.painPoints) || !Array.isArray(parsed.strengths) ||
@@ -824,13 +975,8 @@ Best regards,
         cleanText = jsonMatch[0];
       }
 
-      // Fix real newlines inside JSON string values (AI often returns unescaped newlines)
-      cleanText = cleanText.replace(/("[^"]*")/gs, (match) => {
-        return match.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      });
-
-      // Parse JSON response
-      const parsed = JSON.parse(cleanText);
+      // Parse JSON response with fallback repair
+      const parsed = this.safeJsonParse(cleanText);
 
       // Validate required fields (rationale is optional — AI sometimes omits it)
       if (!parsed.subjectLines || !Array.isArray(parsed.subjectLines) ||
