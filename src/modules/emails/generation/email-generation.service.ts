@@ -43,12 +43,6 @@ export type EmailTone = 'friendly' | 'professional' | 'pro_friendly';
 @Injectable()
 export class EmailGenerationService {
   private readonly logger = new Logger(EmailGenerationService.name);
-  
-  // Queue system for rate limiting
-  private requestQueue: Array<() => Promise<any>> = [];
-  private isProcessing = false;
-  private lastRequestTime = 0;
-  private readonly RATE_LIMIT_DELAY = 40000; // 40 seconds delay between requests
 
   constructor(
     private readonly prisma: PrismaService,
@@ -310,91 +304,47 @@ export class EmailGenerationService {
   }
 
   /**
-   * Call Gemini API specifically for email generation with rate limiting queue
+   * Call OpenAI API for email generation
    */
   private async callGeminiAPIForEmail(prompt: string): Promise<{ text: string; tokensUsed: number }> {
-    return new Promise((resolve, reject) => {
-      this.requestQueue.push(async () => {
-        try {
-          // Rate limiting - wait 40 seconds since last request
-          const timeSinceLastRequest = Date.now() - this.lastRequestTime;
-          if (timeSinceLastRequest < this.RATE_LIMIT_DELAY) {
-            const waitTime = this.RATE_LIMIT_DELAY - timeSinceLastRequest;
-            this.logger.log(`⏳ Rate limiting: waiting ${Math.round(waitTime / 1000)} seconds before next email generation request`);
-            await this.sleep(waitTime);
+    const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const apiKey = getNextOpenAiApiKey();
+
+    const response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: prompt
           }
-
-          const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
-          const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-          const apiKey = getNextOpenAiApiKey();
-
-          const response = await fetch(OPENAI_API_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              model: OPENAI_MODEL,
-              messages: [
-                {
-                  role: 'user',
-                  content: prompt
-                }
-              ],
-              temperature: 0.7,
-              max_tokens: 4028
-            })
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`OpenAI API error: ${errorData.error?.message || response.statusText}`);
-          }
-
-          const data = await response.json();
-
-          if (data.choices && data.choices.length > 0) {
-            this.lastRequestTime = Date.now();
-            resolve({
-              text: data.choices[0].message.content,
-              tokensUsed: data.usage?.total_tokens || 0
-            });
-          } else {
-            throw new Error('No response generated from Gemini API');
-          }
-
-        } catch (error) {
-          reject(error);
-        }
-      });
-
-      this.processQueue();
+        ],
+        temperature: 0.7,
+        max_tokens: 6028
+      })
     });
-  }
 
-  /**
-   * Process request queue sequentially
-   */
-  private async processQueue() {
-    if (this.isProcessing) return;
-    this.isProcessing = true;
-
-    while (this.requestQueue.length > 0) {
-      const request = this.requestQueue.shift();
-      if (request) {
-        await request();
-      }
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`OpenAI API error: ${errorData.error?.message || response.statusText}`);
     }
 
-    this.isProcessing = false;
-  }
+    const data = await response.json();
 
-  /**
-   * Sleep utility for rate limiting
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    if (data.choices && data.choices.length > 0) {
+      return {
+        text: data.choices[0].message.content,
+        tokensUsed: data.usage?.total_tokens || 0
+      };
+    } else {
+      throw new Error('No response generated from OpenAI API');
+    }
   }
 
   /**
@@ -476,6 +426,8 @@ You are a B2B outreach specialist. Analyze the target business website content b
 **TARGET BUSINESS:** ${contact.businessName}
 **WEBSITE:** ${contact.website || 'Not provided'}
 **LOCATION:** ${contact.state || 'Not specified'}
+**PAGE TITLE:** ${contact.pageTitle || 'Not provided'}
+**META DESCRIPTION:** ${contact.metaDescription || 'Not provided'}
 
 **WEBSITE CONTENT TO ANALYZE:**
 ${scrapedDetails}
@@ -493,7 +445,7 @@ ${servicesText}
 
 **STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
 
-Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
+Carefully review the target business website content, page title, and meta description. Check if they themselves offer ANY of the following as their own services or products:
 
 - Software development, web development, app development, or mobile development
 - WordPress, Shopify, or CMS-based development
@@ -530,7 +482,7 @@ Analyze the website content to produce:
 **IF isCompetitor = false (Standard Pitch):**
 Using the pain points and strengths you identified, write a personalized outreach email:
 1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
+2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their site (a service name, a phrase they use, a value they emphasize), and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
 3. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
 4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
 5. Use ${toneInstructions} tone
@@ -542,7 +494,7 @@ Using the pain points and strengths you identified, write a personalized outreac
 **IF isCompetitor = true (Growth Partner Pitch):**
 This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
 1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
+2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their website (a service, a value, or a market they serve), acknowledge their technical capability, and end by noting what clearly drives their business
 3. Paragraph 3 MUST pivot to GROWTH angles only — choose the most relevant from:
    - Expanding their digital visibility and inbound leads through SEO
    - Scaling client acquisition using marketing automation or CRM
@@ -563,7 +515,7 @@ This business already offers tech/digital services similar to ours. Do NOT pitch
 **EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
 Hi ${contactBizName},\n\n
 [Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
-[Paragraph 2: Specific observation about their business from the website]\n\n
+[Paragraph 2: Natural human-sounding opening + what they do in context + specific observation from their website + what drives their business]\n\n
 [Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
 [Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
@@ -589,7 +541,7 @@ Best regards,
 
 **ICE BREAKER GUIDELINES:**
 - Must be EXACTLY ONE sentence (25-35 words maximum)
-- Should reference something specific from their website content
+- Should reference something specific from their website content, page title, or meta description
 - For competitors: acknowledge their strength or market position, create curiosity about growth
 - For non-competitors: create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
@@ -598,8 +550,10 @@ Best regards,
 
 **STRICT RULES — follow all of these without exception:**
 - ALWAYS run competitor detection first before writing anything
+- Use page title and meta description alongside website content to better understand the business
 - The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
-- Paragraph 2 must always be the client observation — never merge it with the pitch
+- Paragraph 2 must always open with a natural human-sounding observation — never start with the business name or a formal factual statement
+- Paragraph 2 must always describe what they do in context, then move to the observation — never merge it with the pitch
 - Paragraph 3 must always be the pitch OR growth angle — never merge it with the CTA
 - Paragraph 4 must always end with a question
 - Never produce fewer than 4 paragraphs in the email body
@@ -676,6 +630,8 @@ You are a B2B outreach specialist. Analyze the target business website content b
 **TARGET BUSINESS:** ${contact.businessName}
 **WEBSITE:** ${contact.website || 'Not provided'}
 **LOCATION:** ${contact.state || 'Not specified'}
+**PAGE TITLE:** ${contact.pageTitle || 'Not provided'}
+**META DESCRIPTION:** ${contact.metaDescription || 'Not provided'}
 
 **WEBSITE CONTENT TO ANALYZE:**
 ${scrapedDetails}
@@ -693,7 +649,7 @@ ${servicesText}
 
 **STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
 
-Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
+Carefully review the target business website content, page title, and meta description. Check if they themselves offer ANY of the following as their own services or products:
 
 - Software development, web development, app development, or mobile development
 - WordPress, Shopify, or CMS-based development
@@ -719,7 +675,7 @@ Use this to determine the email strategy below.
 **IF isCompetitor = false (Standard Pitch):**
 Using the pain points and strengths you identified, write a personalized outreach email:
 1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service name, a phrase they use, a value they emphasize — and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
+2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their site (a service name, a phrase they use, a value they emphasize), and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
 3. Paragraph 3 MUST connect their pain points to relevant ${clientBusinessName} services. Be specific about what will improve. Pitch one or MULTIPLE services only if they genuinely solve different pain points — do NOT include irrelevant services to pad the list
 4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
 5. Use ${toneInstructions} tone
@@ -731,7 +687,7 @@ Using the pain points and strengths you identified, write a personalized outreac
 **IF isCompetitor = true (Growth Partner Pitch):**
 This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
 1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
+2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their website (a service, a value, or a market they serve), acknowledge their technical capability, and end by noting what clearly drives their business
 3. Paragraph 3 MUST pivot to GROWTH angles only — choose the most relevant from:
    - Expanding their digital visibility and inbound leads through SEO
    - Scaling client acquisition using marketing automation or CRM
@@ -752,7 +708,7 @@ This business already offers tech/digital services similar to ours. Do NOT pitch
 **EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
 Hi ${contactBizName},\n\n
 [Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
-[Paragraph 2: Specific observation about their business from the website]\n\n
+[Paragraph 2: Natural human-sounding opening + what they do in context + specific observation from their website + what drives their business]\n\n
 [Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
 [Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
@@ -771,7 +727,7 @@ Best regards,
 
 **ICE BREAKER GUIDELINES:**
 - Must be EXACTLY ONE sentence (25-35 words maximum)
-- Should reference something specific from their website content
+- Should reference something specific from their website content, page title, or meta description
 - For competitors: acknowledge their strength or market position, create curiosity about growth
 - For non-competitors: create curiosity or acknowledge their success
 - NO periods in the middle, NO line breaks, NO continuation
@@ -780,8 +736,10 @@ Best regards,
 
 **STRICT RULES — follow all of these without exception:**
 - ALWAYS run competitor detection first before writing anything
+- Use page title and meta description alongside website content to better understand the business
 - The fixed company intro block must appear word for word as Paragraph 1 — never rewrite it
-- Paragraph 2 must always be the client observation — never merge it with the pitch
+- Paragraph 2 must always open with a natural human-sounding observation — never start with the business name or a formal factual statement
+- Paragraph 2 must always describe what they do in context, then move to the observation — never merge it with the pitch
 - Paragraph 3 must always be the pitch OR growth angle — never merge it with the CTA
 - Paragraph 4 must always end with a question
 - Never produce fewer than 4 paragraphs in the email body
