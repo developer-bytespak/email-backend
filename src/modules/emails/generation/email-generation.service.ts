@@ -191,7 +191,7 @@ export class EmailGenerationService {
             strengths: combined.strengths,
             opportunities: combined.opportunities,
             keywords: combined.keywords,
-            aiModel: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+            aiModel: process.env.OPENAI_MODEL || 'gpt-5',
           },
         });
 
@@ -212,11 +212,12 @@ export class EmailGenerationService {
         };
       }
 
-      // Post-process: replace any remaining placeholders with actual names
+      // Post-process: replace any remaining placeholders with actual names and booking link
       emailContent.emailBody = emailContent.emailBody
         .replace(/\[Your Name\]/g, clientName)
         .replace(/\[your name\]/gi, clientName)
-        .replace(/^Hi there,/m, `Hi ${contact.businessName || 'there'},`);
+        .replace(/^Hi there,/m, `Hi ${contact.businessName || 'there'},`)
+        .replace(/\{\{BOOKING_LINK\}\}/g, 'Book a Meeting (https://calendly.com/bytesplatform/new-meeting-1)');
 
       // Save email draft to database
       const emailDraft = await scrapingClient.emailDraft.create({
@@ -308,7 +309,7 @@ export class EmailGenerationService {
    */
   private async callGeminiAPIForEmail(prompt: string): Promise<{ text: string; tokensUsed: number }> {
     const OPENAI_API_URL = process.env.OPENAI_API_URL || 'https://api.openai.com/v1/chat/completions';
-    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
     const apiKey = getNextOpenAiApiKey();
 
     const response = await fetch(OPENAI_API_URL, {
@@ -326,7 +327,7 @@ export class EmailGenerationService {
           }
         ],
         temperature: 0.7,
-        max_tokens: 6028
+        max_tokens: 6024
       })
     });
 
@@ -375,8 +376,6 @@ export class EmailGenerationService {
    * Build combined prompt for summary + email in one call
    */
   private buildCombinedPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string, clientName?: string): string {
-    const toneInstructions = this.getToneInstructions(tone);
-    const senderName = clientName || 'Your Name';
     const contactBizName = contact.businessName || 'there';
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
 
@@ -411,149 +410,247 @@ export class EmailGenerationService {
 - Blockchain Development`;
     }
 
-    const clientBusinessName = businessName || contact.businessName;
-    const servicesArray = productServices && productServices.length > 0 
-      ? productServices.map(ps => `"${ps.name}"`).join(', ')
-      : '';
-    const clientBusinessInfo = `{
-  "businessName": "${clientBusinessName}",
-  "services": [${servicesArray}]
-}`;
-
     return `
-You are a B2B outreach specialist. Analyze the target business website content below, provide a structured business analysis, and write a personalized outreach email.
+You are a B2B outreach specialist writing cold emails for Bytes Platform.
+Your only job is to write emails that sound EXACTLY like the gold standard below. Read it three times before writing anything.
 
-**TARGET BUSINESS:** ${contact.businessName}
-**WEBSITE:** ${contact.website || 'Not provided'}
-**LOCATION:** ${contact.state || 'Not specified'}
+════════════════════════════════════════════════
+GOLD STANDARD EMAIL — THIS IS YOUR ONLY TEMPLATE
+════════════════════════════════════════════════
 
-**WEBSITE CONTENT TO ANALYZE:**
-${scrapedDetails}
+Subject: A thought on growing Mackie Mobile
 
-**YOUR CLIENT'S BUSINESS INFORMATION:**
-${clientBusinessInfo}
+Hi [Name],
 
-**${clientBusinessName.toUpperCase()} SERVICES:**
-${servicesText}
+I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation. I came across Mackie Mobile today and I have to say, being the first privacy-first wireless carrier is a genuinely bold move, and the market clearly needs it.
 
-**FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
-"We're Bytes Platform a technology company providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
+The thing that stood out to me is that people who are actively looking for a private, secure wireless alternative are out there searching right now. SIM swap fraud and phishing attacks are in the news constantly, and privacy-conscious consumers are becoming more common every day. The question is whether they're finding Mackie Mobile when they search.
 
----
+An SEO strategy built around the exact terms your ideal customers are searching, combined with some process automation to make onboarding and support smoother as you grow, could really accelerate things for you.
 
-**STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
+I'd love to share a couple of ideas I had specifically for Mackie. Would a 15-minute call this week work for you? You can {{BOOKING_LINK}} here.
 
-Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
-
-- Software development, web development, app development, or mobile development
-- WordPress, Shopify, or CMS-based development
-- UI/UX design or product design
-- AI applications, AI integrations, machine learning, or chatbot development
-- Business process automation or workflow automation
-- SEO, social media marketing, or digital marketing
-- Data analytics, business intelligence, or reporting tools
-- Cloud computing, cloud integration, or cloud infrastructure
-- CRM development, ERP solutions, or enterprise software
-- Cybersecurity solutions or IT security services
-- Blockchain development or Web3 services
-
-If the target business offers ANY of the above as their OWN services (not just uses them internally), set: isCompetitor = true.
-Otherwise set: isCompetitor = false.
-
-Record this as "isCompetitor" in your output JSON and use it to determine the email strategy below.
-
----
-
-**TASK 1 — BUSINESS ANALYSIS:**
-Analyze the website content to produce:
-- A 2-3 sentence business summary
-- 3 specific pain points that external services could address
-- 3 business strengths and competitive advantages
-- 3 concrete opportunities for service providers
-- 5 relevant business keywords for targeting
-- Each pain point, strength, and opportunity must be unique — do NOT repeat the same idea in different words
-
----
-
-**TASK 2 — OUTREACH EMAIL:**
-
-**IF isCompetitor = false (Standard Pitch):**
-Using the pain points and strengths you identified, write a personalized outreach email:
-1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their site (a service name, a phrase they use, a value they emphasize), and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
-
-
-3. Paragraph 3 MUST follow this EXACT structure (written naturally as ONE paragraph):
-
-   --- PART 1: ADVERTISING (GROWTH SIDE) ---
-   - Focus on attracting more clients, increasing visibility, and growing revenue
-   - Include SMM, SEO, website optimization, or digital positioning ONLY if relevant
-   - Explain HOW it works (targeting audience, improving visibility, building authority)
-   - Explain RESULT (more leads, better conversion, stronger brand, increased revenue)
-
-   --- PART 2: MANAGEMENT (EFFICIENCY SIDE) ---
-   - Focus on internal operations and business efficiency
-   - Include AI automation, workflow optimization, or system improvements
-   - Explain HOW it works (automating tasks, improving workflows, reducing manual effort)
-   - Explain RESULT (reduced costs, faster execution, improved efficiency, scalability)
-
-   --- CONNECTION RULE ---
-   - BOTH parts must be clearly distinguishable but flow naturally in one paragraph
-   - DO NOT merge into vague statements
-   - DO NOT list services
-
-   --- FINAL LINE (MANDATORY) ---
-   - End with a strong combined outcome:
-     "helping you grow faster while reducing operational costs and improving overall performance"
-
-4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
-5. Use ${toneInstructions} tone
-6. Keep email body 250-300 words total (excluding greeting and closing)
-7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition
-8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
-9. Do NOT restate the same benefit or pain point twice anywhere in the email
-
----
-
-**IF isCompetitor = true (Growth Partner Pitch):**
-This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
-
-1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
-
-3. Paragraph 3 MUST follow the SAME dual-structure logic:
-
-   --- PART 1: ADVERTISING (GROWTH) ---
-   - Expanding visibility via SEO, social media, or positioning
-   - Improving inbound leads and reach
-
-   --- PART 2: MANAGEMENT (EFFICIENCY) ---
-   - Improving internal efficiency via automation, CRM, workflows
-   - Supporting scale and reducing operational overhead
-
-   - Use collaborative tone: "grow together", "scale impact", "expand reach"
-   - Include outcome: more clients + better efficiency + reduced cost pressure
-   - NEVER imply they lack capability
-
-4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
-5. Use ${toneInstructions} tone
-6. Keep email body 250-300 words total (excluding greeting and closing)
-7. Subject lines MUST focus on growth, scale, or visibility
-8. Do NOT repeat phrases or ideas
-
----
-
-**EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
-Hi ${contactBizName},\n\n
-[Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
-[Paragraph 2: Specific observation about their business from the website]\n\n
-[Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
-[Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
 
----
+════════════════════════════════════════════════
+PARAGRAPH STRUCTURE — STUDY THIS CAREFULLY
+════════════════════════════════════════════════
 
-**OUTPUT FORMAT (single JSON object, no markdown, no extra text):**
+PARAGRAPH 1 = Introduction + Compliment BLENDED TOGETHER
+——————————————————————————————————————————————————————
+This is ONE paragraph. It has two parts that flow into each other:
+
+PART A — Who we are (always the same, word for word):
+"I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation."
+
+PART B — Immediately continues in the SAME paragraph with a genuine compliment about the target business:
+"I came across [Business] today and I have to say, [ONE specific real thing about their business that is genuinely interesting]."
+
+These two parts are ONE paragraph. No line break between them.
+The intro and the compliment are never separated.
+
+PARAGRAPH 2 = Real World Market Tension
+——————————————————————————————————————————————————————
+This stands alone as its own paragraph.
+It describes what is happening RIGHT NOW in the world that makes their situation urgent — a real trend, a real problem their customers face, news happening today.
+It is NOT "many companies struggle with X."
+It ends with a soft tension line that makes them think "yes, that is exactly our reality."
+2-3 sentences.
+
+PARAGRAPH 3 = Solution — One Flowing Sentence
+——————————————————————————————————————————————————————
+ONE paragraph. No bullets. No sub-headers.
+Covers GROWTH first (SEO, digital marketing, visibility) then EFFICIENCY second (automation, CRM, workflows).
+Specific to their industry.
+Ends naturally — no tagline.
+
+PARAGRAPH 4 = Soft Close
+——————————————————————————————————————————————————————
+Three sentences.
+Sentence 1: you have specific ideas for their business.
+Sentence 2: ask for a 15-minute call this week, ending with a question mark.
+Sentence 3: include the booking link placeholder — always use this exact text: "You can {{BOOKING_LINK}} here."
+
+════════════════════════════════════════════════
+TARGET BUSINESS INFORMATION
+════════════════════════════════════════════════
+
+TARGET BUSINESS: ${contact.businessName}
+WEBSITE: ${contact.website || 'Not provided'}
+LOCATION: ${contact.state || 'Not specified'}
+
+WEBSITE CONTENT:
+${scrapedDetails}
+
+BYTES PLATFORM SERVICES:
+${servicesText}
+
+════════════════════════════════════════════════
+STEP 0 — COMPETITOR DETECTION (do this first)
+════════════════════════════════════════════════
+
+Does this business offer ANY of these as their OWN services?
+- Software / app / web / mobile development
+- UI/UX or product design
+- AI, ML, chatbot development
+- Business process or workflow automation
+- SEO, social media, or digital marketing
+- Data analytics or business intelligence
+- Cloud computing or infrastructure
+- CRM, ERP, or enterprise software
+- Cybersecurity or IT security
+- Blockchain or Web3
+
+YES to any → isCompetitor = true
+NO to all → isCompetitor = false
+
+════════════════════════════════════════════════
+STEP 1 — ANSWER THESE BEFORE WRITING ANYTHING
+════════════════════════════════════════════════
+
+Q1. What does this business actually do in plain English?
+    One sentence. Not their tagline.
+    WRONG: "They provide innovative security solutions"
+    RIGHT: "They install video surveillance and access control systems for commercial buildings"
+
+Q2. What is ONE specific real thing on their website that is genuinely interesting — not generic, not their tagline?
+    Something a real person would notice while browsing.
+    WRONG: "impressive lineup of services"
+    WRONG: "cutting-edge technology"
+    RIGHT: "They offer 24/7 remote monitoring for multi-site commercial properties with zero-lag cameras"
+
+Q3. What is happening RIGHT NOW in the real world that makes their customers' situation urgent?
+    A real trend. A real news item. A real market shift.
+    WRONG: "Many companies struggle to integrate systems"
+    WRONG: "In a competitive landscape businesses face challenges"
+    RIGHT: "Commercial break-ins are rising and business owners are moving from traditional alarms to AI-monitored video — the demand is shifting fast"
+
+Q4. What is the most specific growth thing AND the most specific efficiency thing Bytes Platform can do for THIS business?
+    Be specific to their industry, not generic.
+
+Use Q1-Q4 answers to write the email.
+If Q2 has no real answer from the website → put "INSUFFICIENT_DATA" in the summary field and stop.
+
+════════════════════════════════════════════════
+STEP 2 — BUSINESS ANALYSIS
+════════════════════════════════════════════════
+
+Produce:
+- 2-3 sentence business summary
+- 3 specific pain points external services could address
+- 3 business strengths and competitive advantages
+- 3 concrete opportunities for service providers
+- 5 relevant business keywords
+- Every item must be unique — no repeating ideas
+
+════════════════════════════════════════════════
+STEP 3 — WRITE THE EMAIL
+════════════════════════════════════════════════
+
+PARAGRAPH 1 RULES — CRITICAL:
+Write PART A + PART B as ONE single paragraph, no line break.
+
+PART A (exact, word for word, every time, no changes):
+"I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation."
+
+PART B (immediately continues in same paragraph):
+Use one of these openers, rotate each time never repeat:
+- "I came across [Business] today and I have to say, [compliment]."
+- "I was looking at [Business] recently and I have to say, [compliment]."
+- "Honestly, [Business] caught my attention because [compliment]."
+- "[Business] stood out to me — [compliment]."
+
+The compliment must:
+- Come from your Q2 answer — specific and real
+- Be genuinely interesting, not generic praise
+- End the paragraph naturally
+
+BANNED in Paragraph 1 compliment:
+"impressive"
+"cutting-edge"
+"robust"
+"innovative"
+"seamlessly"
+Any version of their own tagline or mission statement
+
+——————————————————————————————————————————————
+PARAGRAPH 2 RULES:
+——————————————————————————————————————————————
+Standalone paragraph. 3-4 sentences.
+Use your Q3 answer — what is happening in the world RIGHT NOW.
+Start with "The thing that stood out to me is..." or a natural variation.
+End with a soft tension question like:
+"The question is whether [their customers] are finding [Business Name] when they search."
+or a natural variation that creates the same tension.
+
+BANNED in Paragraph 2:
+"currently many companies face"
+"in a competitive landscape"
+"many businesses struggle"
+"it's clear that your focus"
+"actionable insights"
+"strategic initiatives"
+"robust"
+"seamlessly"
+"cutting-edge"
+
+——————————————————————————————————————————————
+PARAGRAPH 3 RULES:
+——————————————————————————————————————————————
+One flowing paragraph. No bullets. No line breaks inside.
+Growth mechanism + outcome → then → Efficiency mechanism + outcome.
+Specific to their industry from Q4.
+End naturally. No tagline. No "helping you grow faster while..."
+Think of Paragraph 3 like this — say it in as few words as possible
+while still covering both growth and efficiency. 
+Less is more here.
+
+——————————————————————————————————————————————
+PARAGRAPH 4 RULES:
+——————————————————————————————————————————————
+Exactly 3 sentences.
+"I'd love to share a couple of ideas I had specifically for [Business short name]."
+Then ask for a 15-minute call this week (end with question mark).
+Then add: "You can {{BOOKING_LINK}} here."
+
+════════════════════════════════════════════════
+IF isCompetitor = true
+════════════════════════════════════════════════
+
+Same 4-paragraph structure. Same tone. Same banned words.
+Paragraph 3 only: do NOT pitch dev, AI, automation, or cybersecurity as if they lack it.
+Only pitch: SEO, social media, marketing automation, CRM pipeline, or business intelligence.
+Language: "work alongside", "expand reach", "grow together"
+Never imply missing capability.
+
+════════════════════════════════════════════════
+SUBJECT LINE RULES
+════════════════════════════════════════════════
+
+3 subject lines, each a completely different angle:
+Subject 1 — their specific industry challenge
+Subject 2 — a genuine real observation
+Subject 3 — a curiosity question
+
+Rules:
+- No emojis. No exclamation marks.
+- Under 9 words each.
+- No word or phrase repeated from the email body.
+- Each one must make someone want to open.
+
+════════════════════════════════════════════════
+ICEBREAKER
+════════════════════════════════════════════════
+
+One sentence. 25-35 words.
+Sounds like something said on a real sales call.
+Specific real insight from their website.
+Sharp enough to stop someone mid-scroll.
+
+════════════════════════════════════════════════
+OUTPUT — valid JSON only, no markdown, nothing else
+════════════════════════════════════════════════
+
 {
   "summary": "2-3 sentence business summary",
   "painPoints": ["pain point 1", "pain point 2", "pain point 3"],
@@ -563,37 +660,16 @@ Best regards,
   "isCompetitor": false,
   "pitchAngle": "standard",
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1]\n\n[Paragraph 2]\n\n[Paragraph 3]\n\n[Paragraph 4]\n\nBest regards,",
-  "icebreaker": "Single compelling opening sentence (25-35 words max)",
-  "rationale": "Map pain points to BOTH advertising (growth) and management (efficiency) solutions"
+  "emailBody": "Hi ${contactBizName},\\n\\nI'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation. [PART B compliment here].\\n\\n[Paragraph 2]\\n\\n[Paragraph 3]\\n\\n[Paragraph 4]\\n\\nBest regards,",
+  "icebreaker": "One sentence 25-35 words",
+  "rationale": "Brief mapping of pain points to growth and efficiency"
 }
 
----
-
-**ICE BREAKER GUIDELINES:**
-- EXACTLY one sentence (25-35 words)
-- Based on real website insight
-- No line breaks
-
----
-
-**STRICT RULES:**
-- ALWAYS run competitor detection first
-- NEVER modify fixed intro
-- NEVER merge paragraphs
-- Paragraph 4 MUST end with a question
-- Paragraph 3 MUST include BOTH:
-  (1) Advertising (growth / revenue)
-  (2) Management (efficiency / cost reduction)
-- If either is missing → output is INVALID
-- For competitors: never pitch dev, AI, automation, or cybersecurity as if they don't have it
-- For competitors: only pitch SEO, social media, marketing automation, CRM growth, or BI expansion
-- Output ONLY valid JSON
-
-**CRITICAL JSON RULES:**
-- Use \\n for line breaks
-- Escape quotes properly
-- Must be JSON.parse() valid
+CRITICAL JSON RULES:
+- Use \\n for line breaks inside emailBody
+- Escape all quotes with \\"
+- Must be 100% JSON.parse() valid
+- Output ONLY the JSON — nothing before or after
 `;
   }
 
@@ -601,12 +677,9 @@ Best regards,
    * Build email-only prompt (when summary already exists)
    */
   private buildEmailGenerationPrompt(scrapedData: any, contact: any, tone: EmailTone, productServices?: any[], businessName?: string, clientName?: string): string {
-    const toneInstructions = this.getToneInstructions(tone);
-    const senderName = clientName || 'Your Name';
     const contactBizName = contact.businessName || 'there';
     const scrapedDetails = this.formatScrapedDataDetails(scrapedData);
 
-    // Format services from ProductService table
     let servicesText = '';
     if (productServices && productServices.length > 0) {
       servicesText = productServices.map(ps => {
@@ -614,7 +687,6 @@ Best regards,
         return `- ${ps.name}${desc}`;
       }).join('\n');
     } else {
-      // Fallback to default services if none exist
       servicesText = `- Web Development
 - WordPress Development
 - Shopify Development
@@ -639,174 +711,244 @@ Best regards,
 - Blockchain Development`;
     }
 
-    // Use businessName from ProductService or fallback to contact's businessName
-    const clientBusinessName = businessName || contact.businessName;
-
-    // Format services array for JSON
-    const servicesArray = productServices && productServices.length > 0 
-      ? productServices.map(ps => `"${ps.name}"`).join(', ')
-      : '';
-    const clientBusinessInfo = `{
-  "businessName": "${clientBusinessName}",
-  "services": [${servicesArray}]
-}`;
-
     return `
-You are a B2B outreach specialist. Analyze the target business website content below, identify their challenges and strengths, and write a personalized outreach email.
+You are a B2B outreach specialist writing cold emails for Bytes Platform.
+Your only job is to write emails that sound EXACTLY like the gold standard below. Read it three times before writing anything.
 
-**TARGET BUSINESS:** ${contact.businessName}
-**WEBSITE:** ${contact.website || 'Not provided'}
-**LOCATION:** ${contact.state || 'Not specified'}
+════════════════════════════════════════════════
+GOLD STANDARD EMAIL — THIS IS YOUR ONLY TEMPLATE
+════════════════════════════════════════════════
 
-**WEBSITE CONTENT TO ANALYZE:**
-${scrapedDetails}
+Subject: A thought on growing Mackie Mobile
 
-**YOUR CLIENT'S BUSINESS INFORMATION:**
-${clientBusinessInfo}
+Hi [Name],
 
-**${clientBusinessName.toUpperCase()} SERVICES:**
-${servicesText}
+I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation. I came across Mackie Mobile today and I have to say, being the first privacy-first wireless carrier is a genuinely bold move, and the market clearly needs it.
 
-**FIXED COMPANY INTRO BLOCK (use this exact paragraph as Paragraph 1 of every email — do NOT rephrase, shorten, or skip it):**
-"We're Bytes Platform a technology company providing custom software development, AI solutions, automation systems, and digital transformation services for businesses across different industries. We've delivered 300+ projects and supported 100+ clients with tailored solutions designed to improve efficiency, scalability, and operational performance."
+The thing that stood out to me is that people who are actively looking for a private, secure wireless alternative are out there searching right now. SIM swap fraud and phishing attacks are in the news constantly, and privacy-conscious consumers are becoming more common every day. The question is whether they're finding Mackie Mobile when they search.
 
----
+An SEO strategy built around the exact terms your ideal customers are searching, combined with some process automation to make onboarding and support smoother as you grow, could really accelerate things for you.
 
-**STEP 0 — COMPETITOR DETECTION (run this first, before any other task):**
+I'd love to share a couple of ideas I had specifically for Mackie. Would a 15-minute call this week work for you? You can {{BOOKING_LINK}} here.
 
-Carefully review the target business website content. Check if they themselves offer ANY of the following as their own services or products:
-
-- Software development, web development, app development, or mobile development
-- WordPress, Shopify, or CMS-based development
-- UI/UX design or product design
-- AI applications, AI integrations, machine learning, or chatbot development
-- Business process automation or workflow automation
-- SEO, social media marketing, or digital marketing
-- Data analytics, business intelligence, or reporting tools
-- Cloud computing, cloud integration, or cloud infrastructure
-- CRM development, ERP solutions, or enterprise software
-- Cybersecurity solutions or IT security services
-- Blockchain development or Web3 services
-
-If the target business offers ANY of the above as their OWN services (not just uses them internally), set: isCompetitor = true.
-Otherwise set: isCompetitor = false.
-
-Use this to determine the email strategy below.
-
----
-
-**OUTREACH EMAIL:**
-
-**IF isCompetitor = false (Standard Pitch):**
-Using the pain points and strengths you identified, write a personalized outreach email:
-1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST open with a natural, human-sounding observation about the target business — written as if a real person genuinely browsed their website. Do NOT open with the business name or a formal factual statement like "X is a company that does Y." Instead, lead with what you noticed or what stood out — for example: "Looking at your work...", "I came across your website and noticed...", "What caught my attention was...", "Your focus on [X] really stood out..." — then briefly describe what they do in context, reference something specific from their site (a service name, a phrase they use, a value they emphasize), and end by noting what clearly drives their business (e.g. reliability, precision, efficiency)
-
-
-3. Paragraph 3 MUST follow this EXACT structure (written naturally as ONE paragraph):
-
-   --- PART 1: ADVERTISING (GROWTH SIDE) ---
-   - Focus on attracting more clients, increasing visibility, and growing revenue
-   - Include SMM, SEO, website optimization, or digital positioning ONLY if relevant
-   - Explain HOW it works (targeting audience, improving visibility, building authority)
-   - Explain RESULT (more leads, better conversion, stronger brand, increased revenue)
-
-   --- PART 2: MANAGEMENT (EFFICIENCY SIDE) ---
-   - Focus on internal operations and business efficiency
-   - Include AI automation, workflow optimization, or system improvements
-   - Explain HOW it works (automating tasks, improving workflows, reducing manual effort)
-   - Explain RESULT (reduced costs, faster execution, improved efficiency, scalability)
-
-   --- CONNECTION RULE ---
-   - BOTH parts must be clearly distinguishable but flow naturally in one paragraph
-   - DO NOT merge into vague statements
-   - DO NOT list services
-
-   --- FINAL LINE (MANDATORY) ---
-   - End with a strong combined outcome:
-     "helping you grow faster while reducing operational costs and improving overall performance"
-
-4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
-5. Use ${toneInstructions} tone
-6. Keep email body 250-300 words total (excluding greeting and closing)
-7. Each subject line MUST take a different angle (e.g. pain point, compliment, question) — NO repetition
-8. Do NOT repeat phrases from the icebreaker in the email body or subject lines
-9. Do NOT restate the same benefit or pain point twice anywhere in the email
-
----
-
-**IF isCompetitor = true (Growth Partner Pitch):**
-This business already offers tech/digital services similar to ours. Do NOT pitch our core services as if they lack them. Instead, position ${clientBusinessName} as a GROWTH & SCALE PARTNER:
-
-1. Paragraph 1 MUST always be the fixed company intro block above — word for word, no changes
-2. Paragraph 2 MUST reference something specific from their website — a service, a value, or a market they serve — and acknowledge their technical capability. End by noting what clearly drives their business
-
-3. Paragraph 3 MUST follow the SAME dual-structure logic:
-
-   --- PART 1: ADVERTISING (GROWTH) ---
-   - Expanding visibility via SEO, social media, or positioning
-   - Improving inbound leads and reach
-
-   --- PART 2: MANAGEMENT (EFFICIENCY) ---
-   - Improving internal efficiency via automation, CRM, workflows
-   - Supporting scale and reducing operational overhead
-
-   - Use collaborative tone: "grow together", "scale impact", "expand reach"
-   - Include outcome: more clients + better efficiency + reduced cost pressure
-   - NEVER imply they lack capability
-
-4. Paragraph 4 MUST be a short, soft call-to-action ending with a question
-5. Use ${toneInstructions} tone
-6. Keep email body 250-300 words total (excluding greeting and closing)
-7. Subject lines MUST focus on growth, scale, or visibility
-8. Do NOT repeat phrases or ideas
-
----
-
-**EMAIL STRUCTURE (emailBody must follow this exact format for BOTH strategies):**
-Hi ${contactBizName},\n\n
-[Paragraph 1: FIXED COMPANY INTRO — copied word for word]\n\n
-[Paragraph 2: Specific observation about their business from the website]\n\n
-[Paragraph 3: Service pitch (standard) OR growth/scale pitch (competitor)]\n\n
-[Paragraph 4: Soft CTA ending with a question]\n\n
 Best regards,
 
----
+════════════════════════════════════════════════
+PARAGRAPH STRUCTURE — STUDY THIS CAREFULLY
+════════════════════════════════════════════════
 
-**OUTPUT FORMAT:**
+PARAGRAPH 1 = Introduction + Compliment BLENDED TOGETHER
+——————————————————————————————————————————————————————
+This is ONE paragraph. It has two parts that flow into each other:
+
+PART A — Who we are (always the same, word for word):
+"I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation."
+
+PART B — Immediately continues in the SAME paragraph with a genuine compliment about the target business:
+"I came across [Business] today and I have to say, [ONE specific real thing about their business that is genuinely interesting]."
+
+These two parts are ONE paragraph. No line break between them.
+The intro and the compliment are never separated.
+
+PARAGRAPH 2 = Real World Market Tension
+——————————————————————————————————————————————————————
+This stands alone as its own paragraph.
+It describes what is happening RIGHT NOW in the world that makes their situation urgent — a real trend, a real problem their customers face, news happening today.
+It is NOT "many companies struggle with X."
+It ends with a soft tension line that makes them think "yes, that is exactly our reality."
+3-4 sentences.
+
+PARAGRAPH 3 = Solution — One Flowing Sentence
+——————————————————————————————————————————————————————
+ONE paragraph. No bullets. No sub-headers.
+Covers GROWTH first (SEO, digital marketing, visibility) then EFFICIENCY second (automation, CRM, workflows).
+Specific to their industry.
+Ends naturally — no tagline.
+
+PARAGRAPH 4 = Soft Close
+——————————————————————————————————————————————————————
+Three sentences.
+Sentence 1: you have specific ideas for their business.
+Sentence 2: ask for a 15-minute call this week, ending with a question mark.
+Sentence 3: include the booking link placeholder — always use this exact text: "You can {{BOOKING_LINK}} here."
+
+════════════════════════════════════════════════
+TARGET BUSINESS INFORMATION
+════════════════════════════════════════════════
+
+TARGET BUSINESS: ${contact.businessName}
+WEBSITE: ${contact.website || 'Not provided'}
+LOCATION: ${contact.state || 'Not specified'}
+
+WEBSITE CONTENT:
+${scrapedDetails}
+
+BYTES PLATFORM SERVICES:
+${servicesText}
+
+════════════════════════════════════════════════
+STEP 0 — COMPETITOR DETECTION (do this first)
+════════════════════════════════════════════════
+
+Does this business offer ANY of these as their OWN services?
+- Software / app / web / mobile development
+- UI/UX or product design
+- AI, ML, chatbot development
+- Business process or workflow automation
+- SEO, social media, or digital marketing
+- Data analytics or business intelligence
+- Cloud computing or infrastructure
+- CRM, ERP, or enterprise software
+- Cybersecurity or IT security
+- Blockchain or Web3
+
+YES to any → isCompetitor = true
+NO to all → isCompetitor = false
+
+════════════════════════════════════════════════
+STEP 1 — ANSWER THESE BEFORE WRITING ANYTHING
+════════════════════════════════════════════════
+
+Q1. What does this business actually do in plain English?
+    One sentence. Not their tagline.
+    WRONG: "They provide innovative security solutions"
+    RIGHT: "They install video surveillance and access control systems for commercial buildings"
+
+Q2. What is ONE specific real thing on their website that is genuinely interesting — not generic, not their tagline?
+    Something a real person would notice while browsing.
+    WRONG: "impressive lineup of services"
+    WRONG: "cutting-edge technology"
+    RIGHT: "They offer 24/7 remote monitoring for multi-site commercial properties with zero-lag cameras"
+
+Q3. What is happening RIGHT NOW in the real world that makes their customers' situation urgent?
+    A real trend. A real news item. A real market shift.
+    WRONG: "Many companies struggle to integrate systems"
+    WRONG: "In a competitive landscape businesses face challenges"
+    RIGHT: "Commercial break-ins are rising and business owners are moving from traditional alarms to AI-monitored video — the demand is shifting fast"
+
+Q4. What is the most specific growth thing AND the most specific efficiency thing Bytes Platform can do for THIS business?
+    Be specific to their industry, not generic.
+
+Use Q1-Q4 answers to write the email.
+If Q2 has no real answer from the website → put "INSUFFICIENT_DATA" in the icebreaker field and stop.
+
+════════════════════════════════════════════════
+WRITE THE EMAIL
+════════════════════════════════════════════════
+
+PARAGRAPH 1 RULES — CRITICAL:
+Write PART A + PART B as ONE single paragraph, no line break.
+
+PART A (exact, word for word, every time, no changes):
+"I'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation."
+
+PART B (immediately continues in same paragraph):
+Use one of these openers, rotate each time never repeat:
+- "I came across [Business] today and I have to say, [compliment]."
+- "I was looking at [Business] recently and I have to say, [compliment]."
+- "Honestly, [Business] caught my attention because [compliment]."
+- "[Business] stood out to me — [compliment]."
+
+The compliment must:
+- Come from your Q2 answer — specific and real
+- Be genuinely interesting, not generic praise
+- End the paragraph naturally
+
+BANNED in Paragraph 1 compliment:
+"impressive"
+"cutting-edge"
+"robust"
+"innovative"
+"seamlessly"
+Any version of their own tagline or mission statement
+
+——————————————————————————————————————————————
+PARAGRAPH 2 RULES:
+——————————————————————————————————————————————
+Standalone paragraph. 3-4 sentences.
+Use your Q3 answer — what is happening in the world RIGHT NOW.
+Start with "The thing that stood out to me is..." or a natural variation.
+End with a soft tension question like:
+"The question is whether [their customers] are finding [Business Name] when they search."
+or a natural variation that creates the same tension.
+
+BANNED in Paragraph 2:
+"currently many companies face"
+"in a competitive landscape"
+"many businesses struggle"
+"it's clear that your focus"
+"actionable insights"
+"strategic initiatives"
+"robust"
+"seamlessly"
+"cutting-edge"
+
+——————————————————————————————————————————————
+PARAGRAPH 3 RULES:
+——————————————————————————————————————————————
+One flowing paragraph. No bullets. No line breaks inside.
+Growth mechanism + outcome → then → Efficiency mechanism + outcome.
+Specific to their industry from Q4.
+End naturally. No tagline. No "helping you grow faster while..."
+
+——————————————————————————————————————————————
+PARAGRAPH 4 RULES:
+——————————————————————————————————————————————
+Exactly 3 sentences.
+"I'd love to share a couple of ideas I had specifically for [Business short name]."
+Then ask for a 15-minute call this week (end with question mark).
+Then add: "You can {{BOOKING_LINK}} here."
+
+════════════════════════════════════════════════
+IF isCompetitor = true
+════════════════════════════════════════════════
+
+Same 4-paragraph structure. Same tone. Same banned words.
+Paragraph 3 only: do NOT pitch dev, AI, automation, or cybersecurity as if they lack it.
+Only pitch: SEO, social media, marketing automation, CRM pipeline, or business intelligence.
+Language: "work alongside", "expand reach", "grow together"
+Never imply missing capability.
+
+════════════════════════════════════════════════
+SUBJECT LINE RULES
+════════════════════════════════════════════════
+
+3 subject lines, each a completely different angle:
+Subject 1 — their specific industry challenge
+Subject 2 — a genuine real observation
+Subject 3 — a curiosity question
+
+Rules:
+- No emojis. No exclamation marks.
+- Under 9 words each.
+- No word or phrase repeated from the email body.
+- Each one must make someone want to open.
+
+════════════════════════════════════════════════
+ICEBREAKER
+════════════════════════════════════════════════
+
+One sentence. 25-35 words.
+Sounds like something said on a real sales call.
+Specific real insight from their website.
+Sharp enough to stop someone mid-scroll.
+
+════════════════════════════════════════════════
+OUTPUT — valid JSON only, no markdown, nothing else
+════════════════════════════════════════════════
+
 {
   "subjectLines": ["Subject 1", "Subject 2", "Subject 3"],
-  "emailBody": "Hi ${contactBizName},\n\n[Paragraph 1]\n\n[Paragraph 2]\n\n[Paragraph 3]\n\n[Paragraph 4]\n\nBest regards,",
-  "icebreaker": "Single compelling opening sentence (25-35 words max)",
-  "rationale": "Map pain points to BOTH advertising (growth) and management (efficiency) solutions"
+  "emailBody": "Hi ${contactBizName},\\n\\nI'm [Your Name] from Bytes Platform. We're a technology company specializing in custom software, digital marketing, and business automation. [PART B compliment here].\\n\\n[Paragraph 2]\\n\\n[Paragraph 3]\\n\\n[Paragraph 4]\\n\\nBest regards,",
+  "icebreaker": "One sentence 25-35 words",
+  "rationale": "Brief mapping of pain points to growth and efficiency"
 }
 
----
-
-**ICE BREAKER GUIDELINES:**
-- EXACTLY one sentence (25-35 words)
-- Based on real website insight
-- No line breaks
-
----
-
-**STRICT RULES:**
-- ALWAYS run competitor detection first
-- NEVER modify fixed intro
-- NEVER merge paragraphs
-- Paragraph 4 MUST end with a question
-- Paragraph 3 MUST include BOTH:
-  (1) Advertising (growth / revenue)
-  (2) Management (efficiency / cost reduction)
-- If either is missing → output is INVALID
-- For competitors: never pitch dev, AI, automation, or cybersecurity as if they don't have it
-- For competitors: only pitch SEO, social media, marketing automation, CRM growth, or BI expansion
-- Output ONLY valid JSON
-
-**CRITICAL JSON RULES:**
-- Use \\n for line breaks
-- Escape quotes properly
-- Must be JSON.parse() valid
+CRITICAL JSON RULES:
+- Use \\n for line breaks inside emailBody
+- Escape all quotes with \\"
+- Must be 100% JSON.parse() valid
+- Output ONLY the JSON — nothing before or after
 `;
   }
 

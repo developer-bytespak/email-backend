@@ -216,8 +216,14 @@ export class SendGridService {
     
     // Convert each paragraph: single newlines become <br>, then wrap in <p>
     const htmlParagraphs = paragraphs.map(paragraph => {
+      // Replace "Book a Meeting (URL)" with a styled hyperlink
+      let processed = paragraph.replace(
+        /Book a Meeting \(https:\/\/calendly\.com\/bytesplatform\/new-meeting-1\)/g,
+        '<a href="https://calendly.com/bytesplatform/new-meeting-1" style="color: #0066cc; text-decoration: none; font-weight: bold;">Book a Meeting</a>'
+      );
+
       // Replace single newlines with <br> tags
-      const withBreaks = paragraph
+      const withBreaks = processed
         .split('\n')
         .map(line => line.trim())
         .filter(line => line.length > 0)
